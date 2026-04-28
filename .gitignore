@@ -16,6 +16,7 @@ coverage.html
 # Local runtime state
 tmp/
 data/
+.runloop-dev-home/
 *.db
 *.db-shm
 *.db-wal

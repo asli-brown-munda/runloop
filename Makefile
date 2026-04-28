@@ -1,7 +1,8 @@
-.PHONY: build test fmt lint lint-install run-daemon run-cli clean
+.PHONY: build test fmt fmt-check lint lint-install run-daemon run-cli clean
 
 GOLANGCI_LINT_VERSION ?= v2.8.0
 GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || printf '%s/bin/golangci-lint' "$$(go env GOPATH)")
+GOIMPORTS ?= $(shell command -v goimports 2>/dev/null || printf '%s/bin/goimports' "$$(go env GOPATH)")
 
 build:
 	mkdir -p bin
@@ -13,6 +14,23 @@ test:
 
 fmt:
 	gofmt -w ./cmd ./internal
+	@test -x "$(GOIMPORTS)" || { echo "goimports is not installed. Run 'go install golang.org/x/tools/cmd/goimports@latest'."; exit 1; }
+	$(GOIMPORTS) -w ./cmd ./internal
+
+fmt-check:
+	@unformatted="$$(gofmt -l ./cmd ./internal)"; \
+	if [ -n "$$unformatted" ]; then \
+		echo "gofmt is required on:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+	@test -x "$(GOIMPORTS)" || { echo "goimports is not installed. Run 'go install golang.org/x/tools/cmd/goimports@latest'."; exit 1; }
+	@unimported="$$( $(GOIMPORTS) -l ./cmd ./internal )"; \
+	if [ -n "$$unimported" ]; then \
+		echo "goimports is required on:"; \
+		echo "$$unimported"; \
+		exit 1; \
+	fi
 
 lint:
 	go vet ./...
