@@ -75,7 +75,23 @@ func WriteInitial(paths Paths) error {
 	if err := writeIfMissing(paths.ConfigFile, configData, 0o644); err != nil {
 		return err
 	}
-	if err := writeIfMissing(paths.SourcesFile, []byte("sources:\n  - id: manual\n    type: manual\n    enabled: true\n"), 0o644); err != nil {
+	sourcesYAML := []byte(`sources:
+  - id: manual
+    type: manual
+    enabled: true
+  # - id: notes
+  #   type: filesystem
+  #   enabled: true
+  #   config:
+  #     directory: ~/runloop-inbox
+  #     glob: "*.md"
+  # - id: heartbeat
+  #   type: schedule
+  #   enabled: true
+  #   config:
+  #     every: 1m
+`)
+	if err := writeIfMissing(paths.SourcesFile, sourcesYAML, 0o644); err != nil {
 		return err
 	}
 	workflow := []byte(`id: manual-hello

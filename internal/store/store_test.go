@@ -95,6 +95,40 @@ func TestTriggerCreatesDispatchAndRunCompletesManualWorkflow(t *testing.T) {
 	}
 }
 
+func TestSourceCursorRoundTrip(t *testing.T) {
+	st, ctx := testStore(t)
+	if err := st.EnsureSourceRow(ctx, "notes", "filesystem"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.GetSourceCursor(ctx, "notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.IsZero() {
+		t.Fatalf("expected zero cursor, got %#v", got)
+	}
+	if err := st.UpsertSourceCursor(ctx, "notes", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSourceCursor(ctx, "notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "v1" {
+		t.Fatalf("want cursor v1, got %q", got.Value)
+	}
+	if err := st.UpsertSourceCursor(ctx, "notes", "v2"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = st.GetSourceCursor(ctx, "notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "v2" {
+		t.Fatalf("want cursor v2, got %q", got.Value)
+	}
+}
+
 func engineRootFromRun(t *testing.T, st *Store, ctx context.Context, runID int64) string {
 	t.Helper()
 	var path string

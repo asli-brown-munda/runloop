@@ -448,6 +448,36 @@ func (s *Store) AddSinkOutput(ctx context.Context, runID int64, typ, path string
 	return err
 }
 
+func (s *Store) EnsureSourceRow(ctx context.Context, id, typ string) error {
+	if id == "" {
+		return errors.New("source id required")
+	}
+	if typ == "" {
+		typ = id
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO sources(id, type, enabled, created_at) VALUES(?, ?, 1, ?)`, id, typ, now())
+	return err
+}
+
+func (s *Store) GetSourceCursor(ctx context.Context, sourceID string) (sources.Cursor, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM source_cursors WHERE source_id=?`, sourceID).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sources.Cursor{}, nil
+	}
+	if err != nil {
+		return sources.Cursor{}, err
+	}
+	return sources.Cursor{Value: value}, nil
+}
+
+func (s *Store) UpsertSourceCursor(ctx context.Context, sourceID, cursor string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO source_cursors(source_id, cursor, updated_at) VALUES(?, ?, ?)
+		ON CONFLICT(source_id) DO UPDATE SET cursor=excluded.cursor, updated_at=excluded.updated_at`,
+		sourceID, cursor, now())
+	return err
+}
+
 func exists(ctx context.Context, db *sql.DB, query string, args ...any) (bool, error) {
 	var n int
 	err := db.QueryRowContext(ctx, query, args...).Scan(&n)

@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"runloop/internal/artifacts"
 	"runloop/internal/config"
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
@@ -24,11 +23,8 @@ type Server struct {
 	httpServer *http.Server
 }
 
-func NewServer(cfg config.Config, paths config.Paths, st *store.Store, sourceManager *sources.Manager, logger *slog.Logger) *Server {
+func NewServer(cfg config.Config, paths config.Paths, st *store.Store, sourceManager *sources.Manager, inboxSvc *inbox.Service, evaluator *triggers.Evaluator, engine *runs.Engine, logger *slog.Logger) *Server {
 	_ = logger
-	inboxSvc := inbox.NewService(st)
-	evaluator := triggers.NewEvaluator(st)
-	engine := runs.NewEngine(st, artifacts.New(cfg.Daemon.ArtifactDir))
 	api := &API{store: st, inbox: inboxSvc, evaluator: evaluator, engine: engine, sources: sourceManager}
 	r := chi.NewRouter()
 	token := readToken(paths.AuthToken)

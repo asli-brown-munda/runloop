@@ -9,6 +9,8 @@ type Cursor struct {
 	Value string
 }
 
+func (c Cursor) IsZero() bool { return c.Value == "" }
+
 type InboxCandidate struct {
 	SourceID   string
 	ExternalID string

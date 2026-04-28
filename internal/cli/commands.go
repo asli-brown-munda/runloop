@@ -26,6 +26,7 @@ func NewRootCommand(name string) *cobra.Command {
 	cmd.AddCommand(inboxCommand())
 	cmd.AddCommand(workflowsCommand())
 	cmd.AddCommand(runsCommand())
+	cmd.AddCommand(sourcesCommand())
 	return cmd
 }
 
@@ -214,6 +215,42 @@ func runsCommand() *cobra.Command {
 			}
 			var out any
 			if err := client.Get("/api/runs/"+args[0], &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
+	return cmd
+}
+
+func sourcesCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "sources", Short: "Inspect and test sources"}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List registered sources",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Get("/api/sources", &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "test <id>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Run the source's connectivity check",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Post("/api/sources/"+args[0]+"/test", nil, &out); err != nil {
 				return err
 			}
 			return printJSON(cmd, out)

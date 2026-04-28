@@ -6,16 +6,23 @@ import (
 	"log/slog"
 	"os"
 
+	"runloop/internal/artifacts"
 	"runloop/internal/config"
+	"runloop/internal/inbox"
+	"runloop/internal/runs"
 	"runloop/internal/sources"
+	_ "runloop/internal/sources/filesystem"
 	"runloop/internal/sources/manual"
+	_ "runloop/internal/sources/schedule"
 	"runloop/internal/store"
+	"runloop/internal/triggers"
 	"runloop/internal/web"
 )
 
 type Daemon struct {
 	server *web.Server
 	store  *store.Store
+	runner *sourceRunner
 	logger *slog.Logger
 }
 
@@ -39,16 +46,40 @@ func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
 		_ = st.Close()
 		return nil, err
 	}
-	manager := sources.NewManager(manual.New("manual"))
-	server := web.NewServer(cfg, paths, st, manager, logger)
-	return &Daemon{server: server, store: st, logger: logger}, nil
+	sourcesFile, err := config.LoadSourcesFile(cfg.Sources.File)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	manager, err := sources.LoadManager(sourcesFile)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	if _, ok := manager.Get("manual"); !ok {
+		if err := manager.Register(manual.New("manual")); err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+	}
+	inboxSvc := inbox.NewService(st)
+	evaluator := triggers.NewEvaluator(st)
+	engine := runs.NewEngine(st, artifacts.New(cfg.Daemon.ArtifactDir))
+	server := web.NewServer(cfg, paths, st, manager, inboxSvc, evaluator, engine, logger)
+	runner := newSourceRunner(manager, st, inboxSvc, evaluator, engine, logger)
+	return &Daemon{server: server, store: st, runner: runner, logger: logger}, nil
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
-	errs := make(chan error, 1)
+	errs := make(chan error, 2)
 	go func() {
 		d.logger.Info("starting local API")
 		errs <- d.server.ListenAndServe()
+	}()
+	runnerCtx, cancelRunner := context.WithCancel(ctx)
+	defer cancelRunner()
+	go func() {
+		errs <- d.runner.Run(runnerCtx)
 	}()
 	select {
 	case <-ctx.Done():
@@ -57,8 +88,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if err := d.server.Shutdown(shutdownCtx); err != nil {
 			return err
 		}
+		cancelRunner()
 		return d.store.Close()
 	case err := <-errs:
+		cancelRunner()
 		_ = d.store.Close()
 		if err != nil {
 			return fmt.Errorf("daemon stopped: %w", err)

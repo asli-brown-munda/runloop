@@ -7,7 +7,16 @@ import (
 	"runloop/internal/sources"
 )
 
-const EntityType = "manual_item"
+const (
+	Type       = "manual"
+	EntityType = "manual_item"
+)
+
+func init() {
+	sources.Register(Type, func(id string, _ map[string]any) (sources.Source, error) {
+		return New(id), nil
+	})
+}
 
 type Source struct {
 	id string
@@ -22,7 +31,7 @@ func New(id string) Source {
 
 func (s Source) ID() string { return s.id }
 
-func (s Source) Type() string { return "manual" }
+func (s Source) Type() string { return Type }
 
 func (s Source) Sync(ctx context.Context, cursor sources.Cursor) ([]sources.InboxCandidate, sources.Cursor, error) {
 	return nil, cursor, ctx.Err()
