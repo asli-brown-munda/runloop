@@ -1,0 +1,4 @@
+sources:
+  - id: manual
+    type: manual
+    enabled: true

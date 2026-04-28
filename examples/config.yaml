@@ -1,0 +1,8 @@
+daemon:
+  bindAddress: 127.0.0.1
+  port: 8765
+sources:
+  file: sources.yaml
+workflows:
+  dir: workflows
+models: {}

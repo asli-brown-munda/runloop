@@ -1,0 +1,21 @@
+id: manual-hello
+name: Manual Hello
+enabled: true
+
+triggers:
+  - type: inbox
+    source: manual
+    entityType: manual_item
+    policy: once_per_item
+
+steps:
+  - id: echo
+    type: transform
+    input:
+      message: "{{ inbox.normalized.message }}"
+    output:
+      result: "Hello from Runloop: {{ input.message }}"
+
+sinks:
+  - type: markdown
+    path: report.md
