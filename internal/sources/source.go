@@ -27,3 +27,7 @@ type Source interface {
 	Sync(ctx context.Context, cursor Cursor) ([]InboxCandidate, Cursor, error)
 	Test(ctx context.Context) error
 }
+
+type ChangeNotifier interface {
+	WaitForChange(ctx context.Context) error
+}

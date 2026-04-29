@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/fsnotify/fsnotify"
+
 	"runloop/internal/sources"
 )
 
@@ -31,7 +33,34 @@ type Source struct {
 	directory  string
 	glob       string
 	entityType string
+	newWatcher watcherFactory
 }
+
+type watcherFactory func() (fileWatcher, error)
+
+type fileWatcher interface {
+	Add(name string) error
+	Close() error
+	Events() <-chan fsnotify.Event
+	Errors() <-chan error
+}
+
+type fsnotifyWatcher struct {
+	watcher *fsnotify.Watcher
+}
+
+func newFSNotifyWatcher() (fileWatcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	return &fsnotifyWatcher{watcher: watcher}, nil
+}
+
+func (w *fsnotifyWatcher) Add(name string) error         { return w.watcher.Add(name) }
+func (w *fsnotifyWatcher) Close() error                  { return w.watcher.Close() }
+func (w *fsnotifyWatcher) Events() <-chan fsnotify.Event { return w.watcher.Events }
+func (w *fsnotifyWatcher) Errors() <-chan error          { return w.watcher.Errors }
 
 func New(id string, cfg map[string]any) (*Source, error) {
 	dir, _ := cfg["directory"].(string)
@@ -50,7 +79,7 @@ func New(id string, cfg map[string]any) (*Source, error) {
 	if _, err := filepath.Match(glob, "probe"); err != nil {
 		return nil, fmt.Errorf("filesystem source %q invalid glob %q: %w", id, glob, err)
 	}
-	return &Source{id: id, directory: dir, glob: glob, entityType: entityType}, nil
+	return &Source{id: id, directory: dir, glob: glob, entityType: entityType, newWatcher: newFSNotifyWatcher}, nil
 }
 
 func (s *Source) ID() string   { return s.id }
@@ -68,6 +97,56 @@ func (s *Source) Test(ctx context.Context) error {
 		return fmt.Errorf("filesystem source %q: %s is not a directory", s.id, s.directory)
 	}
 	return nil
+}
+
+func (s *Source) WaitForChange(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.Test(ctx); err != nil {
+		return err
+	}
+	newWatcher := s.newWatcher
+	if newWatcher == nil {
+		newWatcher = newFSNotifyWatcher
+	}
+	watcher, err := newWatcher()
+	if err != nil {
+		return fmt.Errorf("filesystem source %q: create watcher: %w", s.id, err)
+	}
+	defer func() { _ = watcher.Close() }()
+	if err := watcher.Add(s.directory); err != nil {
+		return fmt.Errorf("filesystem source %q: watch %s: %w", s.id, s.directory, err)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case event, ok := <-watcher.Events():
+			if !ok {
+				return fmt.Errorf("filesystem source %q: watcher closed", s.id)
+			}
+			if s.matchesEvent(event) {
+				return nil
+			}
+		case err, ok := <-watcher.Errors():
+			if !ok {
+				return fmt.Errorf("filesystem source %q: watcher closed", s.id)
+			}
+			return fmt.Errorf("filesystem source %q: watch error: %w", s.id, err)
+		}
+	}
+}
+
+func (s *Source) matchesEvent(event fsnotify.Event) bool {
+	if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) == 0 {
+		return false
+	}
+	if filepath.Dir(event.Name) != s.directory {
+		return false
+	}
+	ok, err := filepath.Match(s.glob, filepath.Base(event.Name))
+	return err == nil && ok
 }
 
 func (s *Source) Sync(ctx context.Context, cursor sources.Cursor) ([]sources.InboxCandidate, sources.Cursor, error) {

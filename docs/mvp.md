@@ -2,7 +2,7 @@
 
 We are building the MVP of Run Enclave: a local-first agentic workflow executor daemon for developers.
 
-The product is a Go-based background daemon that polls sources, puts normalized source entities into an Inbox, evaluates workflow YAML triggers, creates dispatches, runs workflow steps, stores artifacts/logs, and exposes a local CLI/API for inspection.
+The product is a Go-based background daemon that watches or polls sources, puts normalized source entities into an Inbox, evaluates workflow YAML triggers, creates dispatches, runs workflow steps, stores artifacts/logs, and exposes a local CLI/API for inspection.
 
 Do not overbuild. This setup task should create the initial repo, skeleton modules, basic interfaces, SQLite schema, config loading, and a minimal end-to-end path.
 

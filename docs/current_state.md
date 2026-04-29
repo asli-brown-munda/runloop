@@ -1,12 +1,13 @@
 # Current State
 
-Runloop currently has a working development baseline for the minimal manual workflow path:
+Runloop currently has a working development baseline for the manual workflow path and configured sources:
 
 ```text
 manual inbox item -> trigger evaluation -> dispatch -> workflow run -> transform step -> markdown sink artifact
+configured source -> inbox item -> trigger evaluation -> dispatch -> workflow run
 ```
 
-The setup is intentionally small. It establishes the daemon, CLI, config paths, SQLite schema, workflow loading, trigger matching, dispatch processing, step execution, and artifact writing.
+The setup is intentionally small. It establishes the daemon, CLI, config paths, SQLite schema, workflow loading, source loading, source change detection, trigger matching, dispatch processing, step execution, and artifact writing.
 
 ## Binaries
 
@@ -115,12 +116,24 @@ Important behavior:
 - A changed workflow YAML creates a new workflow version.
 - An unchanged workflow YAML does not create a duplicate version.
 
-## Source And Inbox State
+## Sources And Inbox State
 
-Manual source support is in:
+Configured source support is loaded from:
 
 ```text
-internal/sources/manual/manual.go
+~/.config/runloop/sources.yaml
+```
+
+The path is controlled by `sources.file` in:
+
+```text
+~/.config/runloop/config.yaml
+```
+
+Source config parsing is in:
+
+```text
+internal/config/sources.go
 ```
 
 The source interface is in:
@@ -128,6 +141,110 @@ The source interface is in:
 ```text
 internal/sources/source.go
 ```
+
+Current source contract:
+
+```go
+type Source interface {
+	ID() string
+	Type() string
+	Sync(ctx context.Context, cursor Cursor) ([]InboxCandidate, Cursor, error)
+	Test(ctx context.Context) error
+}
+
+type ChangeNotifier interface {
+	WaitForChange(ctx context.Context) error
+}
+```
+
+Source construction is registry based:
+
+```text
+internal/sources/factory.go
+internal/sources/manager.go
+```
+
+Built-in source packages register themselves from `init` functions. The daemon imports the built-in source packages so their constructors are available:
+
+```text
+internal/sources/filesystem
+internal/sources/schedule
+```
+
+Manual source support is in:
+
+```text
+internal/sources/manual/manual.go
+```
+
+The manual source is always available. If it is not present in `sources.yaml`, the daemon registers a default source with ID `manual`.
+
+Filesystem source support is in:
+
+```text
+internal/sources/filesystem/filesystem.go
+```
+
+Filesystem source config:
+
+```yaml
+sources:
+  - id: notes
+    type: filesystem
+    enabled: true
+    config:
+      directory: ~/runloop-inbox
+      glob: "*.md"
+      entityType: note
+```
+
+The filesystem source uses `github.com/fsnotify/fsnotify` to wait for OS file events in one configured directory. Matching create, write, or rename events wake the source runner, which then scans the directory, filters files by `glob`, emits one inbox candidate per changed file, inlines UTF-8 content up to 64 KiB, and stores a cursor using the newest observed modification time.
+
+Schedule source support is in:
+
+```text
+internal/sources/schedule/schedule.go
+```
+
+Schedule source config:
+
+```yaml
+sources:
+  - id: heartbeat
+    type: schedule
+    enabled: true
+    config:
+      every: 1m
+      payload:
+        reason: periodic
+```
+
+Schedule sources support exactly one of:
+
+```text
+every
+cron
+```
+
+The first sync establishes a baseline timestamp. Later syncs emit synthetic `schedule_tick` inbox candidates for elapsed schedule times and persist the latest fired timestamp as the cursor.
+
+The source runner is in:
+
+```text
+internal/daemon/sourcerunner.go
+```
+
+Current source runner behavior:
+
+- ensures a row exists in `sources` for each registered source
+- skips running `manual`
+- performs one startup sync for each non-manual source
+- waits on `ChangeNotifier` sources such as `filesystem` instead of polling them
+- uses a 5-second ticker only for sources without change notifications, such as `schedule`
+- loads and stores source cursors through `source_cursors`
+- upserts emitted inbox candidates
+- evaluates triggers for changed inbox versions
+- drains queued workflow runs after matching trigger evaluation
 
 Inbox models and normalization helpers are in:
 
@@ -152,6 +269,8 @@ source_id + external_id
 ```
 
 If the raw or normalized payload changes, a new `inbox_item_versions` row is created.
+
+The current in-process source extension point is compile-time registration. A new source type must be implemented in Go, call `sources.Register`, and be imported into the daemon binary. Users can add more instances of built-in source types by editing their local `sources.yaml` without modifying this repo. External tools can also submit inbox items under custom source IDs through the local API or CLI, but those custom IDs are not registered sources unless the binary imports a matching source implementation.
 
 ## Execution State
 
@@ -231,6 +350,26 @@ The daemon binds to:
 
 The CLI uses the local API for normal operations. `runloop init` is the exception: it writes config, sample files, and the auth token directly.
 
+Current source API routes:
+
+```text
+GET  /api/sources
+POST /api/sources/{id}/test
+```
+
+Current source CLI commands:
+
+```sh
+runloop sources list
+runloop sources test <id>
+```
+
+Manual inbox submissions can specify a custom source ID:
+
+```sh
+runloop inbox add --source external-system --external-id item-1 --title "External item" --json '{"message":"hello"}'
+```
+
 ## Default Runtime Paths
 
 ```text
@@ -291,6 +430,8 @@ HOME="$tmp" ./bin/runloop inbox add \
 HOME="$tmp" ./bin/runloop inbox list
 HOME="$tmp" ./bin/runloop workflows list
 HOME="$tmp" ./bin/runloop runs list
+HOME="$tmp" ./bin/runloop sources list
+HOME="$tmp" ./bin/runloop sources test manual
 ```
 
 Expected result:
@@ -338,10 +479,12 @@ make build
 ./bin/runloop --help
 ```
 
-## Current Commit
+## Current Checkpoint
 
-The initial scaffold checkpoint was committed as:
+The latest committed source checkpoint is:
 
 ```text
-6c45b79 feat: scaffold runloop mvp
+93c62cf Source changes
 ```
+
+The current working tree extends that checkpoint with filesystem watcher support through `fsnotify`.

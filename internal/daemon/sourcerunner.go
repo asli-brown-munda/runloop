@@ -53,21 +53,14 @@ func (r *sourceRunner) Run(ctx context.Context) error {
 	if err := r.ensureSourceRows(ctx); err != nil {
 		return err
 	}
-	if err := r.syncOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		r.logger.Error("source sync failed", "err", err)
-	}
-	ticker := time.NewTicker(r.interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := r.syncOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				r.logger.Error("source sync failed", "err", err)
-			}
+	for _, source := range r.manager.List() {
+		if source.Type() == manual.Type {
+			continue
 		}
+		go r.runSource(ctx, source)
 	}
+	<-ctx.Done()
+	return nil
 }
 
 func (r *sourceRunner) ensureSourceRows(ctx context.Context) error {
@@ -79,19 +72,51 @@ func (r *sourceRunner) ensureSourceRows(ctx context.Context) error {
 	return nil
 }
 
-func (r *sourceRunner) syncOnce(ctx context.Context) error {
-	for _, source := range r.manager.List() {
-		if source.Type() == manual.Type {
-			continue
+func (r *sourceRunner) runSource(ctx context.Context, source sources.Source) {
+	if err := r.syncSource(ctx, source); err != nil && !errors.Is(err, context.Canceled) {
+		r.logger.Error("source sync failed", "source", source.ID(), "err", err)
+	}
+	if notifier, ok := source.(sources.ChangeNotifier); ok {
+		r.runWatchableSource(ctx, source, notifier)
+		return
+	}
+	r.runTimedSource(ctx, source)
+}
+
+func (r *sourceRunner) runTimedSource(ctx context.Context, source sources.Source) {
+	ticker := time.NewTicker(r.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := r.syncSource(ctx, source); err != nil && !errors.Is(err, context.Canceled) {
+				r.logger.Error("source sync failed", "source", source.ID(), "err", err)
+			}
 		}
-		if err := ctx.Err(); err != nil {
-			return err
+	}
+}
+
+func (r *sourceRunner) runWatchableSource(ctx context.Context, source sources.Source, notifier sources.ChangeNotifier) {
+	for {
+		err := notifier.WaitForChange(ctx)
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
 		}
-		if err := r.syncSource(ctx, source); err != nil {
+		if err != nil {
+			r.logger.Error("source watch failed", "source", source.ID(), "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(r.interval):
+				continue
+			}
+		}
+		if err := r.syncSource(ctx, source); err != nil && !errors.Is(err, context.Canceled) {
 			r.logger.Error("source sync failed", "source", source.ID(), "err", err)
 		}
 	}
-	return nil
 }
 
 func (r *sourceRunner) syncSource(ctx context.Context, source sources.Source) error {

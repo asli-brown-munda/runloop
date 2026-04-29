@@ -1,6 +1,6 @@
 # Architecture
 
-Runloop is a local-first daemon and CLI for executing AI-powered developer workflows on one machine. The daemon owns source polling, inbox normalization, trigger evaluation, dispatching, run execution, step execution, artifact storage, and sink output.
+Runloop is a local-first daemon and CLI for executing AI-powered developer workflows on one machine. The daemon owns source ingestion, inbox normalization, trigger evaluation, dispatching, run execution, step execution, artifact storage, and sink output.
 
 ## Flow
 
@@ -12,7 +12,7 @@ Sources -> Inbox -> Trigger Evaluator -> Dispatch Queue -> Workflow Run Engine -
 
 ### Sources
 
-Sources discover local or manually submitted items. In the MVP, the manual source is the primary demo source. Source state tracks source-specific cursors, external IDs, normalization metadata, and deduplication inputs.
+Sources discover local or manually submitted items. Filesystem sources use OS file notifications, schedule sources use timed wakeups, and manual items arrive through the local API. Source state tracks source-specific cursors, external IDs, normalization metadata, and deduplication inputs.
 
 ### Inbox
 
