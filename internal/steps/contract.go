@@ -1,9 +1,10 @@
 package steps
 
 type ArtifactRef struct {
-	ID   int64  `json:"id,omitempty"`
-	Path string `json:"path"`
-	Type string `json:"type,omitempty"`
+	ID      int64  `json:"id,omitempty"`
+	Path    string `json:"path"`
+	Type    string `json:"type,omitempty"`
+	Content string `json:"-"`
 }
 
 type StepError struct {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"runloop/internal/artifacts"
 	"runloop/internal/dispatch"
@@ -131,6 +132,9 @@ func (e *Engine) executeRun(ctx context.Context, d dispatch.WorkflowDispatch, ru
 		if _, err := e.repo.AddArtifact(ctx, 0, run.ID, stepRunID, "step_input", filepath.Join(stepDir, "input.json")); err != nil {
 			return err
 		}
+		if err := e.persistStepArtifacts(ctx, run.ID, stepRunID, stepDir, &result); err != nil {
+			return err
+		}
 		if err := e.artifacts.WriteJSON(filepath.Join(stepDir, "output.json"), result); err != nil {
 			return err
 		}
@@ -144,6 +148,53 @@ func (e *Engine) executeRun(ctx context.Context, d dispatch.WorkflowDispatch, ru
 		baseCtx["steps"] = map[string]any{step.ID: result.Data}
 	}
 	return e.renderSinks(ctx, run.ID, wfVersion.Workflow, last)
+}
+
+func (e *Engine) persistStepArtifacts(ctx context.Context, runID, stepRunID int64, stepDir string, result *steps.StepResult) error {
+	for i := range result.Artifacts {
+		artifact := &result.Artifacts[i]
+		path, err := resolveStepArtifactPath(stepDir, *artifact)
+		if err != nil {
+			return err
+		}
+		if err := e.artifacts.WriteText(path, artifact.Content); err != nil {
+			return err
+		}
+		typ := artifact.Type
+		if typ == "" {
+			typ = "step_artifact"
+		}
+		id, err := e.repo.AddArtifact(ctx, 0, runID, stepRunID, typ, path)
+		if err != nil {
+			return err
+		}
+		artifact.ID = id
+		artifact.Path = path
+		artifact.Content = ""
+	}
+	return nil
+}
+
+func resolveStepArtifactPath(stepDir string, ref steps.ArtifactRef) (string, error) {
+	if ref.Path == "" {
+		return "", fmt.Errorf("step artifact path is required")
+	}
+	if filepath.IsAbs(ref.Path) {
+		return "", fmt.Errorf("step artifact path %q must be relative", ref.Path)
+	}
+	clean := filepath.Clean(ref.Path)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("step artifact path %q escapes step directory", ref.Path)
+	}
+	path := filepath.Join(stepDir, clean)
+	rel, err := filepath.Rel(stepDir, path)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("step artifact path %q escapes step directory", ref.Path)
+	}
+	return path, nil
 }
 
 func (e *Engine) renderSinks(ctx context.Context, runID int64, wf workflows.Workflow, data map[string]any) error {

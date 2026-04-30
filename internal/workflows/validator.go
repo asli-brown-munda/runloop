@@ -2,6 +2,11 @@ package workflows
 
 import "fmt"
 
+// StepTypeValidator is set by the steps package (via the daemon) to delegate
+// step-type validation to the steps registry. If nil, validation is skipped
+// (useful for tests of the workflows package in isolation).
+var StepTypeValidator func(string) bool
+
 func Validate(wf Workflow) error {
 	if wf.ID == "" {
 		return fmt.Errorf("workflow id is required")
@@ -24,9 +29,7 @@ func Validate(wf Workflow) error {
 			return fmt.Errorf("duplicate step id %q", step.ID)
 		}
 		seen[step.ID] = true
-		switch step.Type {
-		case "transform", "shell", "wait":
-		default:
+		if StepTypeValidator != nil && !StepTypeValidator(step.Type) {
 			return fmt.Errorf("unsupported step type %q", step.Type)
 		}
 	}

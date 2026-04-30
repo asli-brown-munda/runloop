@@ -2,14 +2,19 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"runloop/internal/artifacts"
 	"runloop/internal/dispatch"
 	"runloop/internal/runs"
 	"runloop/internal/sources/manual"
+	_ "runloop/internal/steps/shell"
+	_ "runloop/internal/steps/transform"
+	_ "runloop/internal/steps/wait"
 	"runloop/internal/triggers"
 )
 
@@ -92,6 +97,75 @@ func TestTriggerCreatesDispatchAndRunCompletesManualWorkflow(t *testing.T) {
 	sink := filepath.Join(engineRootFromRun(t, st, ctx, runList[0].ID), "sinks", "report.md")
 	if _, err := os.Stat(sink); err != nil {
 		t.Fatalf("expected sink artifact %s: %v", sink, err)
+	}
+}
+
+func TestShellStepArtifactsArePersistedForRun(t *testing.T) {
+	st, ctx := testStore(t)
+	workflowPath := filepath.Join(t.TempDir(), "shell-artifacts.yaml")
+	workflowYAML := `id: shell-artifacts
+name: Shell Artifacts
+enabled: true
+permissions:
+  shell: true
+triggers:
+  - type: inbox
+    source: manual
+    entityType: manual_item
+    policy: once_per_item
+steps:
+  - id: cmd
+    type: shell
+    command: "printf out; printf err >&2"
+`
+	if err := os.WriteFile(workflowPath, []byte(workflowYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.LoadWorkflowFile(ctx, workflowPath); err != nil {
+		t.Fatal(err)
+	}
+	item, version, _, err := st.UpsertInboxItem(ctx, manual.Candidate("manual", "shell-1", "Shell", map[string]any{"message": "hello"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := triggers.NewEvaluator(st).EvaluateInboxVersion(ctx, item, version); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	engine := runs.NewEngine(st, artifacts.New(root))
+	if err := engine.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	runList, err := st.ListRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runList) != 1 || runList[0].Status != runs.RunCompleted {
+		t.Fatalf("expected one completed run, got %#v", runList)
+	}
+	stdoutPath := filepath.Join(root, "runs", fmt.Sprintf("run_%d", runList[0].ID), "steps", "cmd", "stdout.log")
+	stderrPath := filepath.Join(root, "runs", fmt.Sprintf("run_%d", runList[0].ID), "steps", "cmd", "stderr.log")
+	if got := readFile(t, stdoutPath); got != "out" {
+		t.Fatalf("stdout artifact = %q", got)
+	}
+	if got := readFile(t, stderrPath); got != "err" {
+		t.Fatalf("stderr artifact = %q", got)
+	}
+
+	var stepRunID int64
+	if err := st.db.QueryRowContext(ctx, `SELECT id FROM step_runs WHERE workflow_run_id=? AND step_id='cmd'`, runList[0].ID).Scan(&stepRunID); err != nil {
+		t.Fatal(err)
+	}
+	for typ, path := range map[string]string{"shell_stdout": stdoutPath, "shell_stderr": stderrPath} {
+		var artifactID int64
+		if err := st.db.QueryRowContext(ctx, `SELECT id FROM artifacts WHERE step_run_id=? AND type=? AND path=?`, stepRunID, typ, path).Scan(&artifactID); err != nil {
+			t.Fatalf("expected artifact row for %s at %s: %v", typ, path, err)
+		}
+		output := readFile(t, filepath.Join(root, "runs", fmt.Sprintf("run_%d", runList[0].ID), "steps", "cmd", "output.json"))
+		if !strings.Contains(output, fmt.Sprintf(`"id": %d`, artifactID)) || !strings.Contains(output, path) {
+			t.Fatalf("output artifact does not include persisted artifact %d at %s: %s", artifactID, path, output)
+		}
 	}
 }
 
@@ -230,4 +304,13 @@ func engineRootFromRun(t *testing.T, st *Store, ctx context.Context, runID int64
 		t.Fatal(err)
 	}
 	return filepath.Dir(filepath.Dir(path))
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

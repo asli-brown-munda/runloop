@@ -8,41 +8,64 @@ import (
 
 var templatePattern = regexp.MustCompile(`\{\{\s*([^}]+?)\s*\}\}`)
 
-func RenderValue(value any, ctx map[string]any) any {
+type TemplateError struct {
+	Path string
+}
+
+func (e *TemplateError) Error() string {
+	return fmt.Sprintf("missing template value for %q", e.Path)
+}
+
+func RenderValue(value any, ctx map[string]any) (any, error) {
 	switch v := value.(type) {
 	case string:
 		return renderString(v, ctx)
 	case map[string]any:
 		out := map[string]any{}
 		for key, item := range v {
-			out[key] = RenderValue(item, ctx)
+			rendered, err := RenderValue(item, ctx)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = rendered
 		}
-		return out
+		return out, nil
 	default:
-		return value
+		return value, nil
 	}
 }
 
-func RenderMap(values map[string]any, ctx map[string]any) map[string]any {
+func RenderMap(values map[string]any, ctx map[string]any) (map[string]any, error) {
 	out := map[string]any{}
 	for key, value := range values {
-		out[key] = RenderValue(value, ctx)
+		rendered, err := RenderValue(value, ctx)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = rendered
 	}
-	return out
+	return out, nil
 }
 
-func renderString(input string, ctx map[string]any) string {
-	return templatePattern.ReplaceAllStringFunc(input, func(match string) string {
+func renderString(input string, ctx map[string]any) (string, error) {
+	var renderErr error
+	out := templatePattern.ReplaceAllStringFunc(input, func(match string) string {
 		parts := templatePattern.FindStringSubmatch(match)
 		if len(parts) != 2 {
 			return match
 		}
-		value, ok := lookup(ctx, strings.TrimSpace(parts[1]))
+		path := strings.TrimSpace(parts[1])
+		value, ok := lookup(ctx, path)
 		if !ok {
+			renderErr = &TemplateError{Path: path}
 			return ""
 		}
 		return fmt.Sprint(value)
 	})
+	if renderErr != nil {
+		return "", renderErr
+	}
+	return out, nil
 }
 
 func lookup(ctx map[string]any, path string) (any, bool) {

@@ -14,10 +14,19 @@ import (
 	_ "runloop/internal/sources/filesystem"
 	"runloop/internal/sources/manual"
 	_ "runloop/internal/sources/schedule"
+	"runloop/internal/steps"
+	_ "runloop/internal/steps/shell"
+	_ "runloop/internal/steps/transform"
+	_ "runloop/internal/steps/wait"
 	"runloop/internal/store"
 	"runloop/internal/triggers"
 	"runloop/internal/web"
+	"runloop/internal/workflows"
 )
+
+func init() {
+	workflows.StepTypeValidator = steps.IsRegistered
+}
 
 type Daemon struct {
 	server          *web.Server
