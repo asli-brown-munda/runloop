@@ -20,10 +20,11 @@ import (
 )
 
 type Daemon struct {
-	server *web.Server
-	store  *store.Store
-	runner *sourceRunner
-	logger *slog.Logger
+	server          *web.Server
+	store           *store.Store
+	runner          *sourceRunner
+	workflowWatcher *workflowWatcher
+	logger          *slog.Logger
 }
 
 func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
@@ -67,11 +68,12 @@ func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
 	engine := runs.NewEngine(st, artifacts.New(cfg.Daemon.ArtifactDir))
 	server := web.NewServer(cfg, paths, st, manager, inboxSvc, evaluator, engine, logger)
 	runner := newSourceRunner(manager, st, inboxSvc, evaluator, engine, logger)
-	return &Daemon{server: server, store: st, runner: runner, logger: logger}, nil
+	workflowWatcher := newWorkflowWatcher(cfg.Workflows.Dir, st, logger)
+	return &Daemon{server: server, store: st, runner: runner, workflowWatcher: workflowWatcher, logger: logger}, nil
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() {
 		d.logger.Info("starting local API")
 		errs <- d.server.ListenAndServe()
@@ -80,6 +82,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer cancelRunner()
 	go func() {
 		errs <- d.runner.Run(runnerCtx)
+	}()
+	go func() {
+		errs <- d.workflowWatcher.Run(runnerCtx)
 	}()
 	select {
 	case <-ctx.Done():

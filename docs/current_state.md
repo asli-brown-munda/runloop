@@ -86,6 +86,8 @@ internal/workflows/parser.go
 internal/workflows/validator.go
 ```
 
+Current validation rejects missing workflow IDs or names, workflows without triggers or steps, duplicate step IDs, unsupported step types, unsupported sink types, and unknown trigger fields. Unknown trigger fields are reported with YAML line context so authoring mistakes point back to the source file.
+
 ## Workflow Persistence
 
 Workflow metadata and immutable versions are stored in SQLite.
@@ -116,6 +118,8 @@ Important behavior:
 - A changed workflow YAML creates a new workflow version.
 - An unchanged workflow YAML does not create a duplicate version.
 - Enabling or disabling a workflow updates only `workflow_definitions.enabled` and does not create a workflow version.
+
+While the daemon is running, `internal/daemon/workflowwatcher.go` watches the configured workflow directory for `.yaml` and `.yml` create, write, or rename events. Changed workflow content is reloaded into `workflow_versions`; unchanged content is skipped by the existing content hash; invalid workflow edits are logged and do not stop the daemon or remove the previously stored version. Workflow file deletes are ignored in the MVP.
 
 ## Workflow Inspection And Management
 
