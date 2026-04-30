@@ -133,6 +133,38 @@ func inboxCommand() *cobra.Command {
 			return printJSON(cmd, out)
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "archive <id>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Archive an inbox item",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Post("/api/inbox/"+args[0]+"/archive", nil, &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "ignore <id>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Ignore an inbox item",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Post("/api/inbox/"+args[0]+"/ignore", nil, &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
 	add := &cobra.Command{
 		Use:   "add",
 		Short: "Add a manual inbox item",

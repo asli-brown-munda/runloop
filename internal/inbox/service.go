@@ -12,6 +12,7 @@ type Repository interface {
 	ListInboxItems(context.Context) ([]InboxItem, error)
 	ArchiveInboxItem(context.Context, int64) error
 	IgnoreInboxItem(context.Context, int64) error
+	LatestInboxVersion(context.Context, int64) (InboxItemVersion, error)
 }
 
 type Service struct {
@@ -40,4 +41,8 @@ func (s *Service) ArchiveInboxItem(ctx context.Context, id int64) error {
 
 func (s *Service) IgnoreInboxItem(ctx context.Context, id int64) error {
 	return s.repo.IgnoreInboxItem(ctx, id)
+}
+
+func (s *Service) LatestInboxVersion(ctx context.Context, itemID int64) (InboxItemVersion, error) {
+	return s.repo.LatestInboxVersion(ctx, itemID)
 }

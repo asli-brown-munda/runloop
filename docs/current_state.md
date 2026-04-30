@@ -254,6 +254,13 @@ internal/inbox/normalize.go
 internal/inbox/service.go
 ```
 
+Items currently enter the inbox through two paths:
+
+- Manual submissions call `POST /api/inbox`, usually through `runloop inbox add`. The API builds a `manual.Candidate`, upserts it through the inbox service, and evaluates triggers only when the upsert creates a changed version.
+- Configured non-manual sources are loaded from `sources.yaml` and run by `internal/daemon/sourcerunner.go`. Each source `Sync` returns `InboxCandidate` values. The runner upserts each candidate, evaluates triggers for changed versions, drains queued workflow runs, and persists the source cursor when it advances.
+
+The built-in non-manual sources today are `filesystem` and `schedule`. The manual source is always available but is not polled by the source runner.
+
 Important rule:
 
 ```text
@@ -262,6 +269,15 @@ Inbox/source state is separate from workflow execution state.
 
 An `InboxItem` does not have workflow statuses such as processing, completed, or failed. Those statuses belong to dispatches, workflow runs, and step runs.
 
+`InboxItem` carries two optional timestamps for user-driven state:
+
+```text
+archived_at  — set by ArchiveInboxItem
+ignored_at   — set by IgnoreInboxItem
+```
+
+These are mutually independent and do not affect trigger evaluation or dispatch creation.
+
 Inbox deduplication uses:
 
 ```text
@@ -269,6 +285,12 @@ source_id + external_id
 ```
 
 If the raw or normalized payload changes, a new `inbox_item_versions` row is created.
+
+Package-level tests for both rules live in:
+
+```text
+internal/inbox/service_test.go
+```
 
 The current in-process source extension point is compile-time registration. A new source type must be implemented in Go, call `sources.Register`, and be imported into the daemon binary. Users can add more instances of built-in source types by editing their local `sources.yaml` without modifying this repo. External tools can also submit inbox items under custom source IDs through the local API or CLI, but those custom IDs are not registered sources unless the binary imports a matching source implementation.
 
@@ -362,6 +384,40 @@ Current source CLI commands:
 ```sh
 runloop sources list
 runloop sources test <id>
+```
+
+Current inbox API routes:
+
+```text
+GET  /api/inbox
+POST /api/inbox
+GET  /api/inbox/{id}
+POST /api/inbox/{id}/archive
+POST /api/inbox/{id}/ignore
+```
+
+`GET /api/inbox/{id}` returns an enriched response:
+
+```json
+{
+  "item":       { ... },
+  "version":    { "rawPayload": {...}, "normalized": {...}, ... },
+  "dispatches": [
+    { "dispatch": {...}, "run": {...} }
+  ]
+}
+```
+
+`run` is omitted if no workflow run has been created for that dispatch yet.
+
+Current inbox CLI commands:
+
+```sh
+runloop inbox list
+runloop inbox show <id>
+runloop inbox add --source <id> --external-id <id> --title <title> --json <json>
+runloop inbox archive <id>
+runloop inbox ignore <id>
 ```
 
 Manual inbox submissions can specify a custom source ID:
@@ -487,4 +543,9 @@ The latest committed source checkpoint is:
 93c62cf Source changes
 ```
 
-The current working tree extends that checkpoint with filesystem watcher support through `fsnotify`.
+The current working tree extends that checkpoint with:
+
+- Filesystem watcher support through `fsnotify`
+- `runloop inbox archive <id>` and `runloop inbox ignore <id>` CLI subcommands
+- Enriched `GET /api/inbox/{id}` response (item + latest version payload + dispatches/runs)
+- Inbox versioning contract tests in `internal/inbox/service_test.go`

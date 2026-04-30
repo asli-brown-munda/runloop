@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"runloop/internal/dispatch"
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
 	"runloop/internal/sources"
@@ -88,7 +89,42 @@ func (a *API) showInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := a.inbox.GetInboxItem(r.Context(), id)
-	writeResult(w, item, err)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	version, err := a.inbox.LatestInboxVersion(r.Context(), item.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	dispatches, err := a.store.ListDispatchesForItem(r.Context(), item.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	type dispatchWithRun struct {
+		Dispatch dispatch.WorkflowDispatch `json:"dispatch"`
+		Run      *runs.WorkflowRun         `json:"run,omitempty"`
+	}
+	drs := make([]dispatchWithRun, 0, len(dispatches))
+	for _, d := range dispatches {
+		run, ok, err := a.store.GetRunByDispatch(r.Context(), d.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		dwr := dispatchWithRun{Dispatch: d}
+		if ok {
+			dwr.Run = &run
+		}
+		drs = append(drs, dwr)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"item":       item,
+		"version":    version,
+		"dispatches": drs,
+	})
 }
 
 func (a *API) archiveInbox(w http.ResponseWriter, r *http.Request) {

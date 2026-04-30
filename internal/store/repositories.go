@@ -110,6 +110,31 @@ func (s *Store) IgnoreInboxItem(ctx context.Context, id int64) error {
 	return err
 }
 
+func (s *Store) ListDispatchesForItem(ctx context.Context, itemID int64) ([]dispatch.WorkflowDispatch, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, inbox_item_id, inbox_item_version_id, workflow_id, workflow_version_id, status, created_at, updated_at FROM workflow_dispatches WHERE inbox_item_id=? ORDER BY id`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []dispatch.WorkflowDispatch
+	for rows.Next() {
+		d, err := scanDispatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetRunByDispatch(ctx context.Context, dispatchID int64) (runs.WorkflowRun, bool, error) {
+	r, err := scanRun(s.db.QueryRowContext(ctx, `SELECT id, workflow_dispatch_id, workflow_version_id, status, started_at, finished_at, created_at, updated_at FROM workflow_runs WHERE workflow_dispatch_id=?`, dispatchID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return runs.WorkflowRun{}, false, nil
+	}
+	return r, err == nil, err
+}
+
 func (s *Store) LatestInboxVersion(ctx context.Context, itemID int64) (inbox.InboxItemVersion, error) {
 	return s.latestInboxVersionTx(ctx, nil, itemID)
 }
