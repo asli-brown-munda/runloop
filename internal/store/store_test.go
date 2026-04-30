@@ -129,6 +129,99 @@ func TestSourceCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWorkflowEnableDisableDoesNotCreateVersion(t *testing.T) {
+	st, ctx := testStore(t)
+	workflowPath := filepath.Join("..", "..", "examples", "workflows", "manual-hello.yaml")
+	loaded, created, err := st.LoadWorkflowFile(ctx, workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected first load to create workflow version")
+	}
+
+	disabled, err := st.SetWorkflowEnabled(ctx, "manual-hello", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.Enabled {
+		t.Fatalf("expected workflow disabled, got %#v", disabled)
+	}
+	def, err := st.GetWorkflowDefinition(ctx, "manual-hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Enabled {
+		t.Fatalf("expected stored workflow disabled, got %#v", def)
+	}
+
+	enabled, err := st.SetWorkflowEnabled(ctx, "manual-hello", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled.Enabled {
+		t.Fatalf("expected workflow enabled, got %#v", enabled)
+	}
+	latest, err := st.LatestWorkflowVersionForDefinition(ctx, "manual-hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.ID != loaded.ID || latest.Version != loaded.Version {
+		t.Fatalf("enable/disable should not create versions: loaded=%#v latest=%#v", loaded, latest)
+	}
+}
+
+func TestLatestWorkflowVersionIncludesStoredYAML(t *testing.T) {
+	st, ctx := testStore(t)
+	workflowPath := filepath.Join("..", "..", "examples", "workflows", "manual-hello.yaml")
+	if _, _, err := st.LoadWorkflowFile(ctx, workflowPath); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := st.LatestWorkflowVersionForDefinition(ctx, "manual-hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Workflow.ID != "manual-hello" {
+		t.Fatalf("unexpected workflow: %#v", latest.Workflow)
+	}
+	if latest.YAML == "" {
+		t.Fatal("expected latest version to include stored YAML")
+	}
+}
+
+func TestListRecentDispatchesForWorkflowOrdersNewestFirstAndLimits(t *testing.T) {
+	st, ctx := testStore(t)
+	workflowPath := filepath.Join("..", "..", "examples", "workflows", "manual-hello.yaml")
+	version, _, err := st.LoadWorkflowFile(ctx, workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created []int64
+	for i := 0; i < 3; i++ {
+		item, itemVersion, _, err := st.UpsertInboxItem(ctx, manual.Candidate("manual", string(rune('a'+i)), "Item", map[string]any{"message": "hello"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := st.CreateDispatch(ctx, item.ID, itemVersion.ID, version.DefinitionID, version.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		created = append(created, d.ID)
+	}
+
+	dispatches, err := st.ListRecentDispatchesForWorkflow(ctx, version.DefinitionID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatches) != 2 {
+		t.Fatalf("expected 2 dispatches, got %#v", dispatches)
+	}
+	if dispatches[0].ID != created[2] || dispatches[1].ID != created[1] {
+		t.Fatalf("expected newest dispatches first, got %#v", dispatches)
+	}
+}
+
 func engineRootFromRun(t *testing.T, st *Store, ctx context.Context, runID int64) string {
 	t.Helper()
 	var path string

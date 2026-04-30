@@ -277,6 +277,58 @@ func (s *Store) ListWorkflowDefinitions(ctx context.Context) ([]workflows.Defini
 	return defs, rows.Err()
 }
 
+func (s *Store) GetWorkflowDefinition(ctx context.Context, workflowID string) (workflows.Definition, error) {
+	return scanWorkflowDefinition(s.db.QueryRowContext(ctx, `SELECT id, workflow_id, name, enabled FROM workflow_definitions WHERE workflow_id=?`, workflowID))
+}
+
+func (s *Store) SetWorkflowEnabled(ctx context.Context, workflowID string, enabled bool) (workflows.Definition, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE workflow_definitions SET enabled=?, updated_at=? WHERE workflow_id=?`, boolInt(enabled), now(), workflowID)
+	if err != nil {
+		return workflows.Definition{}, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return workflows.Definition{}, err
+	}
+	if affected == 0 {
+		return workflows.Definition{}, sql.ErrNoRows
+	}
+	return s.GetWorkflowDefinition(ctx, workflowID)
+}
+
+func (s *Store) LatestWorkflowVersionForDefinition(ctx context.Context, workflowID string) (workflows.Version, error) {
+	return scanWorkflowVersion(s.db.QueryRowContext(ctx, `SELECT wv.id, wv.workflow_definition_id, wv.version, wv.hash, wv.path, wv.yaml
+		FROM workflow_versions wv
+		JOIN workflow_definitions wd ON wd.id = wv.workflow_definition_id
+		WHERE wd.workflow_id=?
+		ORDER BY wv.version DESC
+		LIMIT 1`, workflowID))
+}
+
+func (s *Store) ListRecentDispatchesForWorkflow(ctx context.Context, definitionID int64, limit int) ([]dispatch.WorkflowDispatch, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, inbox_item_id, inbox_item_version_id, workflow_id, workflow_version_id, status, created_at, updated_at
+		FROM workflow_dispatches
+		WHERE workflow_id=?
+		ORDER BY id DESC
+		LIMIT ?`, definitionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []dispatch.WorkflowDispatch
+	for rows.Next() {
+		d, err := scanDispatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) LatestEnabledWorkflowVersions(ctx context.Context) ([]workflows.Version, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT wv.id, wv.workflow_definition_id, wv.version, wv.hash, wv.path, wv.yaml
 		FROM workflow_versions wv
@@ -309,10 +361,21 @@ func scanWorkflowVersion(row rowScanner) (workflows.Version, error) {
 	if err := row.Scan(&v.ID, &v.DefinitionID, &v.Version, &v.Hash, &v.Path, &data); err != nil {
 		return v, err
 	}
+	v.YAML = data
 	if err := yaml.Unmarshal([]byte(data), &v.Workflow); err != nil {
 		return v, err
 	}
 	return v, nil
+}
+
+func scanWorkflowDefinition(row rowScanner) (workflows.Definition, error) {
+	var def workflows.Definition
+	var enabled int
+	if err := row.Scan(&def.ID, &def.WorkflowID, &def.Name, &enabled); err != nil {
+		return def, err
+	}
+	def.Enabled = enabled == 1
+	return def, nil
 }
 
 func (s *Store) RecordTriggerEvaluation(ctx context.Context, itemID, versionID, workflowID, workflowVersionID int64, matched bool, policy, reason string) error {

@@ -216,6 +216,54 @@ func workflowsCommand() *cobra.Command {
 			return printJSON(cmd, out)
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "show <id>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Show a workflow",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Get("/api/workflows/"+args[0], &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "enable <id>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Enable a workflow",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Post("/api/workflows/"+args[0]+"/enable", nil, &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
+	cmd.AddCommand(&cobra.Command{
+		Use:   "disable <id>",
+		Args:  cobra.ExactArgs(1),
+		Short: "Disable a workflow",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := NewClient()
+			if err != nil {
+				return err
+			}
+			var out any
+			if err := client.Post("/api/workflows/"+args[0]+"/disable", nil, &out); err != nil {
+				return err
+			}
+			return printJSON(cmd, out)
+		},
+	})
 	return cmd
 }
 

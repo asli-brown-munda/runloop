@@ -57,4 +57,5 @@ type Version struct {
 	Hash         string   `json:"hash"`
 	Path         string   `json:"path"`
 	Workflow     Workflow `json:"workflow"`
+	YAML         string   `json:"-"`
 }

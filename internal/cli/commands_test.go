@@ -45,3 +45,21 @@ func TestDaemonCommandUsesRunloopBranding(t *testing.T) {
 		t.Fatalf("daemon help missing runloopd command name:\n%s", help)
 	}
 }
+
+func TestWorkflowsCommandIncludesManagementCommands(t *testing.T) {
+	cmd := NewRootCommand("runloop")
+	cmd.SetArgs([]string{"workflows", "--help"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	help := out.String()
+	for _, want := range []string{"show", "enable", "disable"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("workflows help missing %q:\n%s", want, help)
+		}
+	}
+}

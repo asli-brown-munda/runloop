@@ -1,7 +1,9 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -32,6 +34,9 @@ func (a *API) Routes(r chi.Router) {
 	r.Post("/api/inbox/{id}/archive", a.archiveInbox)
 	r.Post("/api/inbox/{id}/ignore", a.ignoreInbox)
 	r.Get("/api/workflows", a.listWorkflows)
+	r.Get("/api/workflows/{id}", a.showWorkflow)
+	r.Post("/api/workflows/{id}/enable", a.enableWorkflow)
+	r.Post("/api/workflows/{id}/disable", a.disableWorkflow)
 	r.Get("/api/runs", a.listRuns)
 	r.Get("/api/runs/{id}", a.showRun)
 	r.Post("/api/runs/{id}/cancel", a.cancelRun)
@@ -148,6 +153,44 @@ func (a *API) listWorkflows(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, items, err)
 }
 
+func (a *API) showWorkflow(w http.ResponseWriter, r *http.Request) {
+	workflowID := chi.URLParam(r, "id")
+	def, err := a.store.GetWorkflowDefinition(r.Context(), workflowID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	version, err := a.store.LatestWorkflowVersionForDefinition(r.Context(), workflowID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	dispatches, err := a.store.ListRecentDispatchesForWorkflow(r.Context(), def.ID, 10)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"definition": def,
+		"version":    version,
+		"yaml":       version.YAML,
+		"dispatches": dispatches,
+	})
+}
+
+func (a *API) enableWorkflow(w http.ResponseWriter, r *http.Request) {
+	a.setWorkflowEnabled(w, r, true)
+}
+
+func (a *API) disableWorkflow(w http.ResponseWriter, r *http.Request) {
+	a.setWorkflowEnabled(w, r, false)
+}
+
+func (a *API) setWorkflowEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
+	def, err := a.store.SetWorkflowEnabled(r.Context(), chi.URLParam(r, "id"), enabled)
+	writeResult(w, def, err)
+}
+
 func (a *API) listRuns(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.ListRuns(r.Context())
 	writeResult(w, items, err)
@@ -205,6 +248,10 @@ func writeResult[T any](w http.ResponseWriter, value T, err error) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
