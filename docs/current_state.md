@@ -557,6 +557,7 @@ Hello from Runloop: hello
 Current baseline checks:
 
 ```sh
+make fmt-check
 make lint
 make test
 make build
@@ -566,15 +567,12 @@ make build
 
 ## Current Checkpoint
 
-The latest committed source checkpoint is:
-
-```text
-93c62cf Source changes
-```
-
-The current working tree extends that checkpoint with:
+The current committed baseline includes:
 
 - Filesystem watcher support through `fsnotify`
+- Runtime workflow YAML reloads through `internal/daemon/workflowwatcher.go`
+- Workflow validation for duplicate step IDs, unsupported step and sink types, and unknown trigger fields with line context
 - `runloop inbox archive <id>` and `runloop inbox ignore <id>` CLI subcommands
 - Enriched `GET /api/inbox/{id}` response (item + latest version payload + dispatches/runs)
 - Inbox versioning contract tests in `internal/inbox/service_test.go`
+- Local development testing guidance in `docs/local-development-testing.md`
