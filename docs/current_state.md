@@ -7,7 +7,7 @@ manual inbox item -> trigger evaluation -> dispatch -> workflow run -> transform
 configured source -> inbox item -> trigger evaluation -> dispatch -> workflow run
 ```
 
-The setup is intentionally small. It establishes the daemon, CLI, config paths, SQLite schema, workflow loading, source loading, source change detection, trigger matching, dispatch processing, step execution, and artifact writing.
+The setup is intentionally small. It establishes the daemon, CLI, config paths, SQLite schema, workflow loading, workflow inspection and enablement controls, source loading, source change detection, trigger matching, dispatch processing, step execution, and artifact writing.
 
 ## Binaries
 
@@ -115,6 +115,31 @@ Important behavior:
 - `workflow_versions` stores immutable YAML versions.
 - A changed workflow YAML creates a new workflow version.
 - An unchanged workflow YAML does not create a duplicate version.
+- Enabling or disabling a workflow updates only `workflow_definitions.enabled` and does not create a workflow version.
+
+## Workflow Inspection And Management
+
+Workflow listing, inspection, and enablement controls are exposed through the local API and CLI.
+
+CLI commands:
+
+```text
+runloop workflows list
+runloop workflows show <id>
+runloop workflows enable <id>
+runloop workflows disable <id>
+```
+
+API endpoints:
+
+```text
+GET  /api/workflows
+GET  /api/workflows/{id}
+POST /api/workflows/{id}/enable
+POST /api/workflows/{id}/disable
+```
+
+`runloop workflows show <id>` prints the current workflow definition state, the latest stored workflow version, the persisted YAML for that version, and the 10 most recent dispatches for the workflow.
 
 ## Sources And Inbox State
 
