@@ -1,10 +1,13 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,8 +36,10 @@ func Load(path string, paths Paths) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, err
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("invalid config %s: %s", path, singleLine(err.Error()))
 	}
 	if cfg.Daemon.BindAddress == "" {
 		cfg.Daemon.BindAddress = "127.0.0.1"
@@ -61,6 +66,10 @@ func Load(path string, paths Paths) (Config, error) {
 		cfg.Models = ModelsConfig{}
 	}
 	return cfg, nil
+}
+
+func singleLine(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func WriteInitial(paths Paths) error {

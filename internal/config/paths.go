@@ -26,9 +26,9 @@ func DefaultPaths() (Paths, error) {
 	if err != nil {
 		return Paths{}, err
 	}
-	configDir := filepath.Join(home, ".config", AppName)
-	stateDir := filepath.Join(home, ".local", "state", AppName)
-	shareDir := filepath.Join(home, ".local", "share", AppName)
+	configDir := filepath.Join(xdgDir("XDG_CONFIG_HOME", filepath.Join(home, ".config")), AppName)
+	stateDir := filepath.Join(xdgDir("XDG_STATE_HOME", filepath.Join(home, ".local", "state")), AppName)
+	shareDir := filepath.Join(xdgDir("XDG_DATA_HOME", filepath.Join(home, ".local", "share")), AppName)
 	return Paths{
 		ConfigDir:    configDir,
 		ConfigFile:   filepath.Join(configDir, "config.yaml"),
@@ -44,6 +44,21 @@ func DefaultPaths() (Paths, error) {
 	}, nil
 }
 
+func ResolveRuntimePaths(paths Paths, cfg Config) Paths {
+	resolved := paths
+	if cfg.Daemon.StateDir != "" {
+		resolved.StateDir = cfg.Daemon.StateDir
+		resolved.DatabaseFile = filepath.Join(cfg.Daemon.StateDir, "runloop.db")
+	}
+	if cfg.Daemon.ArtifactDir != "" {
+		resolved.ArtifactDir = cfg.Daemon.ArtifactDir
+	}
+	if cfg.Daemon.LogDir != "" {
+		resolved.LogDir = cfg.Daemon.LogDir
+	}
+	return resolved
+}
+
 func EnsureDirs(paths Paths) error {
 	for _, dir := range []string{paths.ConfigDir, paths.SecretsDir, paths.WorkflowsDir, paths.StateDir, paths.ArtifactDir, paths.LogDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -51,4 +66,11 @@ func EnsureDirs(paths Paths) error {
 		}
 	}
 	return nil
+}
+
+func xdgDir(envName, fallback string) string {
+	if value := os.Getenv(envName); value != "" {
+		return value
+	}
+	return fallback
 }

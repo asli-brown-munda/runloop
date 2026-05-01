@@ -3,12 +3,16 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestDefaultPathsUseXDGStyleRunloopDirs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
 
 	paths, err := DefaultPaths()
 	if err != nil {
@@ -27,6 +31,100 @@ func TestDefaultPathsUseXDGStyleRunloopDirs(t *testing.T) {
 	}
 	if paths.SecretsFile != filepath.Join(home, ".config", "runloop", "secrets.yaml") {
 		t.Fatalf("unexpected secrets path %q", paths.SecretsFile)
+	}
+}
+
+func TestDefaultPathsHonorXDGOverrides(t *testing.T) {
+	home := t.TempDir()
+	configHome := filepath.Join(t.TempDir(), "config-home")
+	stateHome := filepath.Join(t.TempDir(), "state-home")
+	dataHome := filepath.Join(t.TempDir(), "data-home")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("XDG_DATA_HOME", dataHome)
+
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if paths.ConfigFile != filepath.Join(configHome, "runloop", "config.yaml") {
+		t.Fatalf("ConfigFile = %q", paths.ConfigFile)
+	}
+	if paths.DatabaseFile != filepath.Join(stateHome, "runloop", "runloop.db") {
+		t.Fatalf("DatabaseFile = %q", paths.DatabaseFile)
+	}
+	if paths.ArtifactDir != filepath.Join(dataHome, "runloop", "artifacts") {
+		t.Fatalf("ArtifactDir = %q", paths.ArtifactDir)
+	}
+}
+
+func TestDefaultPathsDoNotUseTempDirUnlessExplicitlyConfigured(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), "home", "runloop-test-user")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tempDir := filepath.Clean(os.TempDir())
+	for name, path := range map[string]string{
+		"ConfigDir":   paths.ConfigDir,
+		"StateDir":    paths.StateDir,
+		"ArtifactDir": paths.ArtifactDir,
+		"LogDir":      paths.LogDir,
+	} {
+		clean := filepath.Clean(path)
+		if clean == tempDir || strings.HasPrefix(clean, tempDir+string(filepath.Separator)) {
+			t.Fatalf("%s = %q, should be derived from HOME when XDG variables are unset", name, path)
+		}
+	}
+	if paths.ConfigDir != filepath.Join(home, ".config", "runloop") {
+		t.Fatalf("ConfigDir = %q", paths.ConfigDir)
+	}
+}
+
+func TestResolveRuntimePathsHonorsDaemonOverrides(t *testing.T) {
+	base := Paths{
+		ConfigDir:    filepath.Join("default", "config"),
+		ConfigFile:   filepath.Join("default", "config", "config.yaml"),
+		SourcesFile:  filepath.Join("default", "config", "sources.yaml"),
+		SecretsFile:  filepath.Join("default", "config", "secrets.yaml"),
+		SecretsDir:   filepath.Join("default", "config", "secrets"),
+		WorkflowsDir: filepath.Join("default", "config", "workflows"),
+		StateDir:     filepath.Join("default", "state"),
+		DatabaseFile: filepath.Join("default", "state", "runloop.db"),
+		ArtifactDir:  filepath.Join("default", "data", "artifacts"),
+		LogDir:       filepath.Join("default", "state", "logs"),
+		AuthToken:    filepath.Join("default", "config", "auth.token"),
+	}
+	cfg := Config{Daemon: DaemonConfig{
+		StateDir:    filepath.Join("custom", "state"),
+		ArtifactDir: filepath.Join("custom", "artifacts"),
+		LogDir:      filepath.Join("custom", "logs"),
+	}}
+
+	paths := ResolveRuntimePaths(base, cfg)
+
+	if paths.StateDir != filepath.Join("custom", "state") {
+		t.Fatalf("StateDir = %q", paths.StateDir)
+	}
+	if paths.DatabaseFile != filepath.Join("custom", "state", "runloop.db") {
+		t.Fatalf("DatabaseFile = %q", paths.DatabaseFile)
+	}
+	if paths.ArtifactDir != filepath.Join("custom", "artifacts") {
+		t.Fatalf("ArtifactDir = %q", paths.ArtifactDir)
+	}
+	if paths.LogDir != filepath.Join("custom", "logs") {
+		t.Fatalf("LogDir = %q", paths.LogDir)
+	}
+	if paths.ConfigFile != base.ConfigFile {
+		t.Fatalf("ConfigFile changed to %q", paths.ConfigFile)
 	}
 }
 

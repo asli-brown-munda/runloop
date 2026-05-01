@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"runloop/internal/artifacts"
 	"runloop/internal/config"
@@ -36,6 +38,7 @@ type Daemon struct {
 	runner          *sourceRunner
 	workflowWatcher *workflowWatcher
 	logger          *slog.Logger
+	logFile         *os.File
 }
 
 func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
@@ -47,45 +50,56 @@ func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := config.EnsureDirs(paths); err != nil {
+	runtimePaths := config.ResolveRuntimePaths(paths, cfg)
+	if err := config.EnsureDirs(runtimePaths); err != nil {
 		return nil, err
 	}
-	st, err := store.Open(ctx, paths.DatabaseFile)
+	runtimeLogger, logFile, err := newRuntimeLogger(runtimePaths.LogDir)
 	if err != nil {
+		return nil, err
+	}
+	st, err := store.Open(ctx, runtimePaths.DatabaseFile)
+	if err != nil {
+		_ = logFile.Close()
 		return nil, err
 	}
 	if _, err := st.LoadWorkflowDir(ctx, cfg.Workflows.Dir); err != nil {
 		_ = st.Close()
+		_ = logFile.Close()
 		return nil, err
 	}
 	sourcesFile, err := config.LoadSourcesFile(cfg.Sources.File)
 	if err != nil {
 		_ = st.Close()
+		_ = logFile.Close()
 		return nil, err
 	}
 	manager, err := sources.LoadManager(sourcesFile)
 	if err != nil {
 		_ = st.Close()
+		_ = logFile.Close()
 		return nil, err
 	}
 	if _, ok := manager.Get("manual"); !ok {
 		if err := manager.Register(manual.New("manual")); err != nil {
 			_ = st.Close()
+			_ = logFile.Close()
 			return nil, err
 		}
 	}
 	inboxSvc := inbox.NewService(st)
 	evaluator := triggers.NewEvaluator(st)
-	secretResolver, err := secrets.NewFileResolver(paths.ConfigDir)
+	secretResolver, err := secrets.NewFileResolver(runtimePaths.ConfigDir)
 	if err != nil {
 		_ = st.Close()
+		_ = logFile.Close()
 		return nil, err
 	}
-	engine := runs.NewEngine(st, artifacts.New(cfg.Daemon.ArtifactDir), runs.WithSecrets(secretResolver))
-	server := web.NewServer(cfg, paths, st, manager, inboxSvc, evaluator, engine, secretResolver, logger)
-	runner := newSourceRunner(manager, st, inboxSvc, evaluator, engine, logger)
-	workflowWatcher := newWorkflowWatcher(cfg.Workflows.Dir, st, logger)
-	return &Daemon{server: server, store: st, runner: runner, workflowWatcher: workflowWatcher, logger: logger}, nil
+	engine := runs.NewEngine(st, artifacts.New(runtimePaths.ArtifactDir), runs.WithSecrets(secretResolver))
+	server := web.NewServer(cfg, runtimePaths, st, manager, inboxSvc, evaluator, engine, secretResolver, runtimeLogger)
+	runner := newSourceRunner(manager, st, inboxSvc, evaluator, engine, runtimeLogger)
+	workflowWatcher := newWorkflowWatcher(cfg.Workflows.Dir, st, runtimeLogger)
+	return &Daemon{server: server, store: st, runner: runner, workflowWatcher: workflowWatcher, logger: runtimeLogger, logFile: logFile}, nil
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
@@ -110,10 +124,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 			return err
 		}
 		cancelRunner()
-		return d.store.Close()
+		return d.close()
 	case err := <-errs:
 		cancelRunner()
-		_ = d.store.Close()
+		_ = d.close()
 		if err != nil {
 			return fmt.Errorf("daemon stopped: %w", err)
 		}
@@ -123,4 +137,26 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 func NewDefaultLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{}))
+}
+
+func newRuntimeLogger(logDir string) (*slog.Logger, *os.File, error) {
+	path := filepath.Join(logDir, "runloopd.log")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	writer := io.MultiWriter(os.Stderr, file)
+	return slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{})), file, nil
+}
+
+func (d *Daemon) close() error {
+	storeErr := d.store.Close()
+	if d.logFile == nil {
+		return storeErr
+	}
+	logErr := d.logFile.Close()
+	if storeErr != nil {
+		return storeErr
+	}
+	return logErr
 }
