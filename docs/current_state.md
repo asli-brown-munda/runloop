@@ -378,9 +378,28 @@ Built-in step packages register themselves from `init` functions. The daemon imp
 internal/steps/transform
 internal/steps/shell
 internal/steps/wait
+internal/steps/claude
 ```
 
-Each handler receives a `steps.Request` carrying the parsed step, the owning workflow, the rendered input, and the templating context. Handlers own their own policy: the shell handler enforces `permissions.shell` itself rather than the dispatcher gating it.
+Each handler receives a `steps.Request` carrying the parsed step, the owning workflow, the rendered input, the templating context, minimal environment defaults, and the configured secret resolver. Handlers own their own policy: the shell and Claude handlers enforce `permissions.shell` themselves rather than the dispatcher gating them.
+
+Shell-like steps do not inherit the daemon's full environment. They receive `PATH`, `HOME`, `USER`, and `TERM` when present, plus explicit `step.env` entries. Env entries can be literals, direct secret references, or credential profile references from `~/.config/runloop/secrets.yaml`.
+
+The run engine creates a per-run workspace under:
+
+```text
+artifacts/runs/run_<id>/workspace
+```
+
+That path is available to templates as:
+
+```text
+{{ runloop.workspace }}
+```
+
+Shell and Claude steps default to that workspace when `workdir` is unset.
+
+The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports CLI login state via `HOME` and can also inject `ANTHROPIC_API_KEY` from the `profiles.claude` credential profile. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary or missing required API-key profile.
 
 The daemon also wires the step registry into workflow validation:
 

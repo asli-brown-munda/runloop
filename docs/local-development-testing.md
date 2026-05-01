@@ -107,6 +107,92 @@ Expected result:
 - `enable manual-hello` sets `enabled` to `true`.
 - Enable and disable operations update `workflow_definitions.enabled` without creating new workflow versions.
 
+## Step Environment And Claude Readiness Smoke Test
+
+Use a temporary workflow to verify shell environment isolation, the per-run workspace, and Claude readiness diagnostics.
+
+Create `$tmp/.config/runloop/workflows/shell-workspace.yaml`:
+
+```yaml
+id: shell-workspace
+name: Shell Workspace
+enabled: true
+permissions:
+  shell: true
+
+triggers:
+  - type: inbox
+    source: manual
+    entityType: manual_item
+    policy: once_per_item
+
+steps:
+  - id: shell-check
+    type: shell
+    command: 'printf "visible=%s\nsecret=%s\npwd=%s\n" "$VISIBLE" "${RUNLOOP_DAEMON_SECRET:-missing}" "$(pwd)"'
+    env:
+      VISIBLE: ok
+
+sinks:
+  - type: json
+    path: shell-workspace.json
+```
+
+Run:
+
+```sh
+RUNLOOP_DAEMON_SECRET=should-not-leak HOME="$tmp" ./bin/runloopd
+```
+
+Then, in another terminal:
+
+```sh
+HOME="$tmp" ./bin/runloop inbox add --source manual --external-id shell-env --title "Shell Env" --json '{"message":"hello"}'
+find "$tmp/.local/share/runloop/artifacts/runs" -path '*shell-check/stdout.log' -print -exec cat {} \;
+```
+
+Expected result:
+
+- `visible=ok` is present.
+- `secret=missing` is present, proving the shell step did not inherit the daemon's full environment.
+- `pwd` points inside `artifacts/runs/run_<id>/workspace` unless the step set `workdir`.
+
+Create `$tmp/.config/runloop/workflows/claude-readiness.yaml`:
+
+```yaml
+id: claude-readiness
+name: Claude Readiness
+enabled: true
+permissions:
+  shell: true
+
+triggers:
+  - type: inbox
+    source: manual
+    entityType: manual_item
+    policy: manual_only
+
+steps:
+  - id: agent
+    type: claude
+    auth: auto
+    prompt: "Summarize {{ inbox.normalized.message }}"
+```
+
+Run:
+
+```sh
+HOME="$tmp" ./bin/runloop workflows show claude-readiness
+```
+
+Expected result:
+
+- The workflow loads as normal because static validation stays portable.
+- The `readiness` field reports local machine diagnostics.
+- If `claude` is not on `PATH`, readiness includes an error.
+- If `claude` is on `PATH` but no `profiles.claude` API-key profile exists, `auth: auto` reports a warning and will rely on Claude CLI login state under `HOME`.
+- If the workflow uses `auth: apiKey`, a missing or broken `profiles.claude` entry is a readiness error.
+
 ## Workflow Reload Smoke Test
 
 With the isolated daemon running, edit the initialized workflow file:
@@ -267,9 +353,12 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 ### Run Engine, Steps, And Sinks
 
 - A queued dispatch creates one workflow run.
-- Built-in step types `transform`, `shell`, and `wait` self-register through `internal/steps/registry.go`; the executor dispatches by `step.Type` and the workflow validator rejects step types that are not registered.
+- Built-in step types `transform`, `shell`, `wait`, and `claude` self-register through `internal/steps/registry.go`; the executor dispatches by `step.Type` and the workflow validator rejects step types that are not registered.
 - Transform steps receive inbox context and previous step output where applicable.
 - Shell steps fail unless `permissions.shell` is enabled (the shell handler enforces the gate itself).
+- Shell steps receive only minimal default environment variables plus explicit `step.env` entries.
+- Shell and Claude steps default to the per-run `{{ runloop.workspace }}` directory when `workdir` is unset.
+- Claude readiness diagnostics distinguish static workflow validity from local machine readiness.
 - Wait steps honor configured duration behavior.
 - Failed steps mark the run and dispatch failed.
 - Completed runs write sink outputs and artifact records.
