@@ -100,6 +100,118 @@ func TestTriggerCreatesDispatchAndRunCompletesManualWorkflow(t *testing.T) {
 	}
 }
 
+func TestTriggerEvaluationPersistenceIncludesVersionsForMatchesAndMisses(t *testing.T) {
+	st, ctx := testStore(t)
+	dir := t.TempDir()
+	matchingPath := filepath.Join(dir, "matching.yaml")
+	missingPath := filepath.Join(dir, "missing.yaml")
+	matchingYAML := `id: matching
+name: Matching
+enabled: true
+triggers:
+  - type: inbox
+    source: manual
+    entityType: manual_item
+    policy: once_per_item
+steps:
+  - id: echo
+    type: transform
+    input:
+      message: "{{ inbox.normalized.message }}"
+    output:
+      result: "{{ input.message }}"
+`
+	missingYAML := `id: missing
+name: Missing
+enabled: true
+triggers:
+  - type: inbox
+    source: filesystem
+    entityType: note
+    policy: once_per_item
+steps:
+  - id: echo
+    type: transform
+    input:
+      message: "{{ inbox.normalized.message }}"
+    output:
+      result: "{{ input.message }}"
+`
+	if err := os.WriteFile(matchingPath, []byte(matchingYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(missingPath, []byte(missingYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matchingVersion, _, err := st.LoadWorkflowFile(ctx, matchingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingVersion, _, err := st.LoadWorkflowFile(ctx, missingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, version, _, err := st.UpsertInboxItem(ctx, manual.Candidate("manual", "persisted", "Persisted", map[string]any{"message": "hello"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := triggers.NewEvaluator(st).EvaluateInboxVersion(ctx, item, version); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.db.QueryContext(ctx, `SELECT inbox_item_id, inbox_item_version_id, workflow_definition_id, workflow_version_id, matched, policy, reason FROM trigger_evaluations ORDER BY workflow_definition_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type persistedEvaluation struct {
+		itemID            int64
+		versionID         int64
+		workflowID        int64
+		workflowVersionID int64
+		matched           int
+		policy            string
+		reason            string
+	}
+	var got []persistedEvaluation
+	for rows.Next() {
+		var ev persistedEvaluation
+		if err := rows.Scan(&ev.itemID, &ev.versionID, &ev.workflowID, &ev.workflowVersionID, &ev.matched, &ev.policy, &ev.reason); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, ev)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []persistedEvaluation{
+		{
+			itemID:            item.ID,
+			versionID:         version.ID,
+			workflowID:        matchingVersion.DefinitionID,
+			workflowVersionID: matchingVersion.ID,
+			matched:           1,
+			policy:            triggers.PolicyOncePerItem,
+			reason:            "matched",
+		},
+		{
+			itemID:            item.ID,
+			versionID:         version.ID,
+			workflowID:        missingVersion.DefinitionID,
+			workflowVersionID: missingVersion.ID,
+			matched:           0,
+			policy:            triggers.PolicyOncePerItem,
+			reason:            "not matched",
+		},
+	}
+	if fmt.Sprintf("%#v", got) != fmt.Sprintf("%#v", want) {
+		t.Fatalf("trigger evaluations mismatch\ngot:  %#v\nwant: %#v", got, want)
+	}
+}
+
 func TestShellStepArtifactsArePersistedForRun(t *testing.T) {
 	st, ctx := testStore(t)
 	workflowPath := filepath.Join(t.TempDir(), "shell-artifacts.yaml")
