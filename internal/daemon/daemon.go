@@ -13,6 +13,7 @@ import (
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
 	"runloop/internal/secrets"
+	"runloop/internal/sinks"
 	"runloop/internal/sources"
 	_ "runloop/internal/sources/filesystem"
 	"runloop/internal/sources/manual"
@@ -30,6 +31,7 @@ import (
 
 func init() {
 	workflows.StepTypeValidator = steps.IsRegistered
+	workflows.SinkTypeValidator = sinks.IsRegistered
 }
 
 type Daemon struct {

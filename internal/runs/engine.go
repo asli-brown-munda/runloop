@@ -2,7 +2,6 @@ package runs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"runloop/internal/dispatch"
 	"runloop/internal/inbox"
 	"runloop/internal/secrets"
+	"runloop/internal/sinks"
 	"runloop/internal/steps"
 	"runloop/internal/workflows"
 )
@@ -231,26 +231,22 @@ func resolveStepArtifactPath(stepDir string, ref steps.ArtifactRef) (string, err
 
 func (e *Engine) renderSinks(ctx context.Context, runID int64, wf workflows.Workflow, data map[string]any) error {
 	for _, sink := range wf.Sinks {
-		path := filepath.Join(artifacts.SinkDir(e.artifacts.Root(), runID), sink.Path)
-		switch sink.Type {
-		case "markdown":
-			content := "# Runloop Report\n\n"
-			for key, value := range data {
-				content += fmt.Sprintf("- %s: %v\n", key, value)
-			}
-			if err := e.artifacts.WriteText(path, content); err != nil {
-				return err
-			}
-		case "json", "file":
-			bytes, _ := json.MarshalIndent(data, "", "  ")
-			if err := e.artifacts.WriteText(path, string(bytes)+"\n"); err != nil {
-				return err
-			}
-		}
-		if err := e.repo.AddSinkOutput(ctx, runID, sink.Type, path); err != nil {
+		output, err := sinks.Render(sinks.Request{
+			Root:  e.artifacts.Root(),
+			RunID: runID,
+			Sink:  sink,
+			Data:  data,
+		})
+		if err != nil {
 			return err
 		}
-		if _, err := e.repo.AddArtifact(ctx, 0, runID, 0, "sink_"+sink.Type, path); err != nil {
+		if err := e.artifacts.WriteText(output.Path, output.Body); err != nil {
+			return err
+		}
+		if err := e.repo.AddSinkOutput(ctx, runID, sink.Type, output.Path); err != nil {
+			return err
+		}
+		if _, err := e.repo.AddArtifact(ctx, 0, runID, 0, "sink_"+sink.Type, output.Path); err != nil {
 			return err
 		}
 	}

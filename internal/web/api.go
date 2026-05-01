@@ -206,7 +206,16 @@ func (a *API) showRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := a.store.GetRun(r.Context(), id)
-	writeResult(w, run, err)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	outputs, err := a.store.ListSinkOutputsForRun(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": run, "sinkOutputs": outputs})
 }
 
 func (a *API) cancelRun(w http.ResponseWriter, r *http.Request) {

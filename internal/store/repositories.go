@@ -536,6 +536,35 @@ func (s *Store) AddSinkOutput(ctx context.Context, runID int64, typ, path string
 	return err
 }
 
+type SinkOutput struct {
+	ID            int64
+	WorkflowRunID int64
+	Type          string
+	Path          string
+	CreatedAt     time.Time
+}
+
+func (s *Store) ListSinkOutputsForRun(ctx context.Context, runID int64) ([]SinkOutput, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, workflow_run_id, type, path, created_at FROM sink_outputs WHERE workflow_run_id=? ORDER BY id ASC`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+	var outputs []SinkOutput
+	for rows.Next() {
+		var output SinkOutput
+		var created string
+		if err := rows.Scan(&output.ID, &output.WorkflowRunID, &output.Type, &output.Path, &created); err != nil {
+			return nil, err
+		}
+		output.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		outputs = append(outputs, output)
+	}
+	return outputs, rows.Err()
+}
+
 func (s *Store) EnsureSourceRow(ctx context.Context, id, typ string) error {
 	if id == "" {
 		return errors.New("source id required")

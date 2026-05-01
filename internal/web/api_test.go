@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +19,7 @@ import (
 	"runloop/internal/sources"
 	"runloop/internal/sources/manual"
 	"runloop/internal/steps"
+	_ "runloop/internal/steps/transform"
 	"runloop/internal/store"
 	"runloop/internal/triggers"
 )
@@ -83,6 +86,59 @@ steps:
 	}
 	if len(out.Readiness) != 1 || out.Readiness[0].Level != steps.DiagnosticWarning {
 		t.Fatalf("readiness = %#v", out.Readiness)
+	}
+}
+
+func TestRunShowEndpointIncludesSinkOutputs(t *testing.T) {
+	_, handler := testWorkflowAPI(t)
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/inbox", strings.NewReader(`{
+		"source": "manual",
+		"externalId": "sink-api",
+		"title": "Sink API",
+		"payload": {"message": "hello"}
+	}`))
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("add inbox status=%d body=%s", res.Code, res.Body.String())
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/runs", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("list runs status=%d body=%s", res.Code, res.Body.String())
+	}
+	var runList []runs.WorkflowRun
+	if err := json.Unmarshal(res.Body.Bytes(), &runList); err != nil {
+		t.Fatal(err)
+	}
+	if len(runList) != 1 {
+		t.Fatalf("expected one run, got %#v", runList)
+	}
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+strconv.FormatInt(runList[0].ID, 10), nil)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("show run status=%d body=%s", res.Code, res.Body.String())
+	}
+	var out struct {
+		Run         runs.WorkflowRun   `json:"run"`
+		SinkOutputs []store.SinkOutput `json:"sinkOutputs"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Run.ID != runList[0].ID {
+		t.Fatalf("expected run %d, got %#v", runList[0].ID, out.Run)
+	}
+	if len(out.SinkOutputs) != 1 {
+		t.Fatalf("expected one sink output, got %#v", out.SinkOutputs)
+	}
+	if out.SinkOutputs[0].Type != "markdown" || !strings.Contains(out.SinkOutputs[0].Path, filepath.Join("sinks", "report.md")) {
+		t.Fatalf("unexpected sink output: %#v", out.SinkOutputs[0])
 	}
 }
 

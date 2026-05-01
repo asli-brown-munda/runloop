@@ -101,6 +101,7 @@ type RetryPolicy struct {
 type Sink struct {
 	Type string `yaml:"type" json:"type"`
 	Path string `yaml:"path" json:"path"`
+	Body string `yaml:"body" json:"body"`
 }
 
 type Definition struct {

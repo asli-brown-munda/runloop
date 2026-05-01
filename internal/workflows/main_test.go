@@ -13,5 +13,13 @@ func TestMain(m *testing.M) {
 			return false
 		}
 	}
+	SinkTypeValidator = func(typ string) bool {
+		switch typ {
+		case "markdown", "json", "file":
+			return true
+		default:
+			return false
+		}
+	}
 	m.Run()
 }

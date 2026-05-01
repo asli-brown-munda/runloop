@@ -7,6 +7,11 @@ import "fmt"
 // (useful for tests of the workflows package in isolation).
 var StepTypeValidator func(string) bool
 
+// SinkTypeValidator is set by the sinks package (via the daemon) to delegate
+// sink-type validation to the sinks registry. If nil, validation is skipped
+// (useful for tests of the workflows package in isolation).
+var SinkTypeValidator func(string) bool
+
 func Validate(wf Workflow) error {
 	if wf.ID == "" {
 		return fmt.Errorf("workflow id is required")
@@ -52,9 +57,7 @@ func Validate(wf Workflow) error {
 		}
 	}
 	for _, sink := range wf.Sinks {
-		switch sink.Type {
-		case "markdown", "json", "file":
-		default:
+		if SinkTypeValidator != nil && !SinkTypeValidator(sink.Type) {
 			return fmt.Errorf("unsupported sink type %q", sink.Type)
 		}
 	}

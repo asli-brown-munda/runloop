@@ -281,6 +281,54 @@ steps:
 	}
 }
 
+func TestListSinkOutputsForRunOrdersByInsertID(t *testing.T) {
+	st, ctx := testStore(t)
+	workflowPath := filepath.Join("..", "..", "examples", "workflows", "manual-hello.yaml")
+	version, _, err := st.LoadWorkflowFile(ctx, workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, itemVersion, _, err := st.UpsertInboxItem(ctx, manual.Candidate("manual", "sinks", "Sinks", map[string]any{"message": "hello"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch, err := st.CreateDispatch(ctx, item.ID, itemVersion.ID, version.DefinitionID, version.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, dispatch.ID, version.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.AddSinkOutput(ctx, run.ID, "json", "/tmp/report.json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddSinkOutput(ctx, run.ID, "file", "/tmp/summary.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	outputs, err := st.ListSinkOutputsForRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs) != 2 {
+		t.Fatalf("expected 2 sink outputs, got %#v", outputs)
+	}
+	if outputs[0].ID == 0 || outputs[1].ID == 0 || outputs[0].ID >= outputs[1].ID {
+		t.Fatalf("expected increasing sink output IDs, got %#v", outputs)
+	}
+	if outputs[0].WorkflowRunID != run.ID || outputs[0].Type != "json" || outputs[0].Path != "/tmp/report.json" {
+		t.Fatalf("unexpected first output: %#v", outputs[0])
+	}
+	if outputs[1].WorkflowRunID != run.ID || outputs[1].Type != "file" || outputs[1].Path != "/tmp/summary.txt" {
+		t.Fatalf("unexpected second output: %#v", outputs[1])
+	}
+	if outputs[0].CreatedAt.IsZero() || outputs[1].CreatedAt.IsZero() {
+		t.Fatalf("expected created timestamps: %#v", outputs)
+	}
+}
+
 func TestSourceCursorRoundTrip(t *testing.T) {
 	st, ctx := testStore(t)
 	if err := st.EnsureSourceRow(ctx, "notes", "filesystem"); err != nil {
