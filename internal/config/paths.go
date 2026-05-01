@@ -11,6 +11,8 @@ type Paths struct {
 	ConfigDir    string
 	ConfigFile   string
 	SourcesFile  string
+	SecretsFile  string
+	SecretsDir   string
 	WorkflowsDir string
 	StateDir     string
 	DatabaseFile string
@@ -31,6 +33,8 @@ func DefaultPaths() (Paths, error) {
 		ConfigDir:    configDir,
 		ConfigFile:   filepath.Join(configDir, "config.yaml"),
 		SourcesFile:  filepath.Join(configDir, "sources.yaml"),
+		SecretsFile:  filepath.Join(configDir, "secrets.yaml"),
+		SecretsDir:   filepath.Join(configDir, "secrets"),
 		WorkflowsDir: filepath.Join(configDir, "workflows"),
 		StateDir:     stateDir,
 		DatabaseFile: filepath.Join(stateDir, "runloop.db"),
@@ -41,7 +45,7 @@ func DefaultPaths() (Paths, error) {
 }
 
 func EnsureDirs(paths Paths) error {
-	for _, dir := range []string{paths.ConfigDir, paths.WorkflowsDir, paths.StateDir, paths.ArtifactDir, paths.LogDir} {
+	for _, dir := range []string{paths.ConfigDir, paths.SecretsDir, paths.WorkflowsDir, paths.StateDir, paths.ArtifactDir, paths.LogDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}

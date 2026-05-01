@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"runloop/internal/artifacts"
 	"runloop/internal/dispatch"
 	"runloop/internal/inbox"
+	"runloop/internal/secrets"
 	"runloop/internal/steps"
 	"runloop/internal/workflows"
 )
@@ -31,10 +33,30 @@ type Engine struct {
 	repo      Repository
 	artifacts *artifacts.Store
 	executor  *steps.Executor
+	readiness steps.ReadinessOptions
 }
 
-func NewEngine(repo Repository, artifactStore *artifacts.Store) *Engine {
-	return &Engine{repo: repo, artifacts: artifactStore, executor: steps.NewExecutor()}
+type EngineOption func(*engineOptions)
+
+type engineOptions struct {
+	secrets secrets.Resolver
+}
+
+func WithSecrets(resolver secrets.Resolver) EngineOption {
+	return func(opts *engineOptions) { opts.secrets = resolver }
+}
+
+func NewEngine(repo Repository, artifactStore *artifacts.Store, opts ...EngineOption) *Engine {
+	options := engineOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return &Engine{
+		repo:      repo,
+		artifacts: artifactStore,
+		executor:  steps.NewExecutor(steps.WithSecrets(options.secrets)),
+		readiness: steps.ReadinessOptions{Secrets: options.secrets},
+	}
 }
 
 func (e *Engine) ProcessOne(ctx context.Context) (bool, error) {
@@ -86,6 +108,11 @@ func (e *Engine) executeRun(ctx context.Context, d dispatch.WorkflowDispatch, ru
 	if err != nil {
 		return err
 	}
+	for _, diagnostic := range steps.CheckReadiness(ctx, wfVersion.Workflow, e.readiness) {
+		if diagnostic.Level == steps.DiagnosticError {
+			return fmt.Errorf("workflow readiness failed for step %s: %s", diagnostic.StepID, diagnostic.Message)
+		}
+	}
 	baseCtx := map[string]any{
 		"inbox": map[string]any{
 			"id":         item.ID,
@@ -98,6 +125,11 @@ func (e *Engine) executeRun(ctx context.Context, d dispatch.WorkflowDispatch, ru
 		},
 	}
 	root := e.artifacts.Root()
+	workspace := artifacts.WorkspaceDir(root, run.ID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		return err
+	}
+	baseCtx["runloop"] = map[string]any{"workspace": workspace}
 	if err := e.artifacts.WriteJSON(filepath.Join(artifacts.InboxDir(root, item.ID), "raw.json"), version.RawPayload); err != nil {
 		return err
 	}

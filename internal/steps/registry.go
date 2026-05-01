@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"runloop/internal/secrets"
 	"runloop/internal/workflows"
 )
 
@@ -12,8 +13,10 @@ import (
 type Request struct {
 	Step     workflows.Step
 	Workflow workflows.Workflow
-	Input    map[string]any  // already-rendered step.Input
-	StepCtx  map[string]any  // baseCtx with "input" merged in (used for templating)
+	Input    map[string]any // already-rendered step.Input
+	StepCtx  map[string]any // baseCtx with "input" merged in (used for templating)
+	Secrets  secrets.Resolver
+	BaseEnv  []string
 }
 
 // Handler executes one step. The first return is the input echoed back

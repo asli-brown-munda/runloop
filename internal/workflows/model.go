@@ -1,5 +1,11 @@
 package workflows
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
 type Workflow struct {
 	ID          string      `yaml:"id" json:"id"`
 	Name        string      `yaml:"name" json:"name"`
@@ -22,14 +28,68 @@ type Trigger struct {
 }
 
 type Step struct {
-	ID       string         `yaml:"id" json:"id"`
-	Type     string         `yaml:"type" json:"type"`
-	Input    map[string]any `yaml:"input" json:"input"`
-	Output   map[string]any `yaml:"output" json:"output"`
-	Command  string         `yaml:"command" json:"command"`
-	Timeout  string         `yaml:"timeout" json:"timeout"`
-	Duration string         `yaml:"duration" json:"duration"`
-	Retry    RetryPolicy    `yaml:"retry" json:"retry"`
+	ID             string              `yaml:"id" json:"id"`
+	Type           string              `yaml:"type" json:"type"`
+	Input          map[string]any      `yaml:"input" json:"input"`
+	Output         map[string]any      `yaml:"output" json:"output"`
+	Command        string              `yaml:"command" json:"command"`
+	Timeout        string              `yaml:"timeout" json:"timeout"`
+	Duration       string              `yaml:"duration" json:"duration"`
+	Workdir        string              `yaml:"workdir" json:"workdir"`
+	Env            map[string]EnvValue `yaml:"env" json:"env"`
+	Prompt         string              `yaml:"prompt" json:"prompt"`
+	Model          string              `yaml:"model" json:"model"`
+	PermissionMode string              `yaml:"permissionMode" json:"permissionMode"`
+	Auth           string              `yaml:"auth" json:"auth"`
+	Args           []string            `yaml:"args" json:"args"`
+	Retry          RetryPolicy         `yaml:"retry" json:"retry"`
+}
+
+type EnvValueKind string
+
+const (
+	EnvLiteral     EnvValueKind = "literal"
+	EnvSecret      EnvValueKind = "secret"
+	EnvFromProfile EnvValueKind = "from"
+)
+
+type EnvValue struct {
+	Kind    EnvValueKind `json:"kind"`
+	Literal string       `json:"literal,omitempty"`
+	Secret  string       `json:"secret,omitempty"`
+	From    string       `json:"from,omitempty"`
+}
+
+func (v *EnvValue) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var value string
+		if err := node.Decode(&value); err != nil {
+			return err
+		}
+		*v = EnvValue{Kind: EnvLiteral, Literal: value}
+		return nil
+	case yaml.MappingNode:
+		if len(node.Content) != 2 {
+			return fmt.Errorf("env value must contain exactly one of secret or from")
+		}
+		key := node.Content[0].Value
+		var value string
+		if err := node.Content[1].Decode(&value); err != nil {
+			return err
+		}
+		switch key {
+		case "secret":
+			*v = EnvValue{Kind: EnvSecret, Secret: value}
+		case "from":
+			*v = EnvValue{Kind: EnvFromProfile, From: value}
+		default:
+			return fmt.Errorf("unknown env value field %q", key)
+		}
+		return nil
+	default:
+		return fmt.Errorf("env value must be a string or mapping")
+	}
 }
 
 type RetryPolicy struct {

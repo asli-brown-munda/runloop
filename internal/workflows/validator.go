@@ -32,6 +32,24 @@ func Validate(wf Workflow) error {
 		if StepTypeValidator != nil && !StepTypeValidator(step.Type) {
 			return fmt.Errorf("unsupported step type %q", step.Type)
 		}
+		for name, value := range step.Env {
+			if name == "" {
+				return fmt.Errorf("step %q env name is required", step.ID)
+			}
+			switch value.Kind {
+			case EnvLiteral:
+			case EnvSecret:
+				if value.Secret == "" {
+					return fmt.Errorf("step %q env %q secret is required", step.ID, name)
+				}
+			case EnvFromProfile:
+				if value.From == "" {
+					return fmt.Errorf("step %q env %q profile reference is required", step.ID, name)
+				}
+			default:
+				return fmt.Errorf("step %q env %q has invalid value", step.ID, name)
+			}
+		}
 	}
 	for _, sink := range wf.Sinks {
 		switch sink.Type {

@@ -25,6 +25,9 @@ func TestDefaultPathsUseXDGStyleRunloopDirs(t *testing.T) {
 	if paths.ArtifactDir != filepath.Join(home, ".local", "share", "runloop", "artifacts") {
 		t.Fatalf("unexpected artifact path %q", paths.ArtifactDir)
 	}
+	if paths.SecretsFile != filepath.Join(home, ".config", "runloop", "secrets.yaml") {
+		t.Fatalf("unexpected secrets path %q", paths.SecretsFile)
+	}
 }
 
 func TestWriteInitialCreatesConfigSamplesAndToken(t *testing.T) {
@@ -39,7 +42,7 @@ func TestWriteInitialCreatesConfigSamplesAndToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{paths.ConfigFile, paths.SourcesFile, filepath.Join(paths.WorkflowsDir, "manual-hello.yaml"), paths.AuthToken} {
+	for _, path := range []string{paths.ConfigFile, paths.SourcesFile, paths.SecretsFile, filepath.Join(paths.WorkflowsDir, "manual-hello.yaml"), paths.AuthToken} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}

@@ -14,7 +14,9 @@ import (
 	"runloop/internal/config"
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
+	"runloop/internal/secrets"
 	"runloop/internal/sources"
+	"runloop/internal/steps"
 	"runloop/internal/store"
 	"runloop/internal/triggers"
 )
@@ -23,9 +25,9 @@ type Server struct {
 	httpServer *http.Server
 }
 
-func NewServer(cfg config.Config, paths config.Paths, st *store.Store, sourceManager *sources.Manager, inboxSvc *inbox.Service, evaluator *triggers.Evaluator, engine *runs.Engine, logger *slog.Logger) *Server {
+func NewServer(cfg config.Config, paths config.Paths, st *store.Store, sourceManager *sources.Manager, inboxSvc *inbox.Service, evaluator *triggers.Evaluator, engine *runs.Engine, secretResolver secrets.Resolver, logger *slog.Logger) *Server {
 	_ = logger
-	api := &API{store: st, inbox: inboxSvc, evaluator: evaluator, engine: engine, sources: sourceManager}
+	api := &API{store: st, inbox: inboxSvc, evaluator: evaluator, engine: engine, sources: sourceManager, readiness: steps.ReadinessOptions{Secrets: secretResolver}}
 	r := chi.NewRouter()
 	token := readToken(paths.AuthToken)
 	r.Use(authMiddleware(token))

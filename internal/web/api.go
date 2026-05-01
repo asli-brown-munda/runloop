@@ -14,6 +14,7 @@ import (
 	"runloop/internal/runs"
 	"runloop/internal/sources"
 	"runloop/internal/sources/manual"
+	"runloop/internal/steps"
 	"runloop/internal/store"
 	"runloop/internal/triggers"
 )
@@ -24,6 +25,7 @@ type API struct {
 	evaluator *triggers.Evaluator
 	engine    *runs.Engine
 	sources   *sources.Manager
+	readiness steps.ReadinessOptions
 }
 
 func (a *API) Routes(r chi.Router) {
@@ -175,6 +177,7 @@ func (a *API) showWorkflow(w http.ResponseWriter, r *http.Request) {
 		"version":    version,
 		"yaml":       version.YAML,
 		"dispatches": dispatches,
+		"readiness":  steps.CheckReadiness(r.Context(), version.Workflow, a.readiness),
 	})
 }
 

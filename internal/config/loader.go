@@ -94,6 +94,20 @@ func WriteInitial(paths Paths) error {
 	if err := writeIfMissing(paths.SourcesFile, sourcesYAML, 0o644); err != nil {
 		return err
 	}
+	secretsYAML := []byte(`# Configure credential profiles once, then built-in steps can use them.
+# secrets:
+#   anthropic-api-key:
+#     file: secrets/anthropic-api-key
+#
+# profiles:
+#   claude:
+#     env:
+#       ANTHROPIC_API_KEY:
+#         secret: anthropic-api-key
+`)
+	if err := writeIfMissing(paths.SecretsFile, secretsYAML, 0o600); err != nil {
+		return err
+	}
 	workflow := []byte(`id: manual-hello
 name: Manual Hello
 enabled: true

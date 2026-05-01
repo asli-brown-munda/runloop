@@ -32,6 +32,16 @@ func Execute(ctx context.Context, req steps.Request) (map[string]any, steps.Step
 	defer cancel()
 	cmd := exec.Command("sh", "-c", step.Command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	env, err := steps.ResolveEnv(ctx, req, nil)
+	if err != nil {
+		return input, steps.StepResult{OK: false, Error: &steps.StepError{Message: err.Error()}}
+	}
+	cmd.Env = env
+	workdir, err := steps.ResolveWorkdir(step, req.StepCtx)
+	if err != nil {
+		return input, steps.StepResult{OK: false, Error: &steps.StepError{Message: err.Error()}}
+	}
+	cmd.Dir = workdir
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -48,7 +58,7 @@ func Execute(ctx context.Context, req steps.Request) (map[string]any, steps.Step
 	go func() {
 		done <- cmd.Wait()
 	}()
-	var err error
+	err = nil
 	timedOut := false
 	select {
 	case err = <-done:

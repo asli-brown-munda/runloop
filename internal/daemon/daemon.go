@@ -10,11 +10,13 @@ import (
 	"runloop/internal/config"
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
+	"runloop/internal/secrets"
 	"runloop/internal/sources"
 	_ "runloop/internal/sources/filesystem"
 	"runloop/internal/sources/manual"
 	_ "runloop/internal/sources/schedule"
 	"runloop/internal/steps"
+	_ "runloop/internal/steps/claude"
 	_ "runloop/internal/steps/shell"
 	_ "runloop/internal/steps/transform"
 	_ "runloop/internal/steps/wait"
@@ -74,8 +76,13 @@ func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
 	}
 	inboxSvc := inbox.NewService(st)
 	evaluator := triggers.NewEvaluator(st)
-	engine := runs.NewEngine(st, artifacts.New(cfg.Daemon.ArtifactDir))
-	server := web.NewServer(cfg, paths, st, manager, inboxSvc, evaluator, engine, logger)
+	secretResolver, err := secrets.NewFileResolver(paths.ConfigDir)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	engine := runs.NewEngine(st, artifacts.New(cfg.Daemon.ArtifactDir), runs.WithSecrets(secretResolver))
+	server := web.NewServer(cfg, paths, st, manager, inboxSvc, evaluator, engine, secretResolver, logger)
 	runner := newSourceRunner(manager, st, inboxSvc, evaluator, engine, logger)
 	workflowWatcher := newWorkflowWatcher(cfg.Workflows.Dir, st, logger)
 	return &Daemon{server: server, store: st, runner: runner, workflowWatcher: workflowWatcher, logger: logger}, nil

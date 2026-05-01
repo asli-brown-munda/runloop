@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"runloop/internal/runs"
 	"runloop/internal/sources"
 	"runloop/internal/sources/manual"
+	"runloop/internal/steps"
 	"runloop/internal/store"
 	"runloop/internal/triggers"
 )
@@ -39,10 +41,49 @@ func testWorkflowAPI(t *testing.T) (*store.Store, http.Handler) {
 		evaluator: evaluator,
 		engine:    engine,
 		sources:   sources.NewManager(manual.New("manual")),
+		readiness: steps.ReadinessOptions{LookPath: func(string) (string, error) { return "/usr/bin/claude", nil }},
 	}
 	r := chi.NewRouter()
 	api.Routes(r)
 	return st, r
+}
+
+func TestWorkflowShowEndpointIncludesReadinessDiagnostics(t *testing.T) {
+	st, handler := testWorkflowAPI(t)
+	path := filepath.Join(t.TempDir(), "claude.yaml")
+	data := []byte(`id: claude-demo
+name: Claude Demo
+enabled: true
+triggers:
+  - type: inbox
+steps:
+  - id: agent
+    type: claude
+    auth: auto
+    prompt: "hello"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.LoadWorkflowFile(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/workflows/claude-demo", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("show status=%d body=%s", res.Code, res.Body.String())
+	}
+	var out struct {
+		Readiness []steps.Diagnostic `json:"readiness"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Readiness) != 1 || out.Readiness[0].Level != steps.DiagnosticWarning {
+		t.Fatalf("readiness = %#v", out.Readiness)
+	}
 }
 
 func TestWorkflowEnableDisableEndpoints(t *testing.T) {
