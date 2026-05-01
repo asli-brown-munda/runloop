@@ -267,8 +267,9 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 ### Run Engine, Steps, And Sinks
 
 - A queued dispatch creates one workflow run.
+- Built-in step types `transform`, `shell`, and `wait` self-register through `internal/steps/registry.go`; the executor dispatches by `step.Type` and the workflow validator rejects step types that are not registered.
 - Transform steps receive inbox context and previous step output where applicable.
-- Shell steps fail unless `permissions.shell` is enabled.
+- Shell steps fail unless `permissions.shell` is enabled (the shell handler enforces the gate itself).
 - Wait steps honor configured duration behavior.
 - Failed steps mark the run and dispatch failed.
 - Completed runs write sink outputs and artifact records.

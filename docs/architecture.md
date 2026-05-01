@@ -34,7 +34,7 @@ The workflow run engine creates and advances workflow runs. It owns run status, 
 
 ### Step Executor
 
-The step executor runs supported MVP step types. Current local step types include transform-style steps and shell-oriented execution. Steps receive workflow context, inbox context, and previous step output according to the workflow definition.
+The step executor dispatches each step to a handler resolved from a registry rather than a hardcoded switch. Built-in step types are `transform`, `shell`, and `wait`, each implemented in its own subpackage that self-registers from an `init` function. Steps receive workflow context, inbox context, and previous step output according to the workflow definition. New step types are added by implementing a handler, calling `steps.Register`, and importing the package into the daemon binary; the workflow validator consults the same registry so unsupported types are rejected at load time.
 
 ### Sinks
 

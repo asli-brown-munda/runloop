@@ -1,6 +1,10 @@
 # Steps
 
-- [ ] **Shell step hardening** — Capture stdout and stderr separately in `internal/steps/shell.go`, persist them as artifacts, respect a per-step timeout, and gate execution on an explicit workflow permission flag.
-- [ ] **Wait step** — Implement `internal/steps/wait.go` as a simple in-process timer, with a TODO/interface for durable resume across daemon restarts.
+- [ ] **Shell step hardening** — Capture stdout and stderr separately in `internal/steps/shell/shell.go`, persist them as artifacts, respect a per-step timeout, and gate execution on an explicit workflow permission flag.
+- [ ] **Wait step** — Implement `internal/steps/wait/wait.go` as a simple in-process timer, with a TODO/interface for durable resume across daemon restarts.
 - [ ] **Transform step template safety** — Make `{{ ... }}` rendering robust to missing keys (return a typed error instead of `<no value>`) and add tests for nested paths like `inbox.normalized.message`.
 - [ ] **Step result artifact contract** — Standardize how `StepResult.Artifacts` are persisted so future step types do not each invent their own layout.
+- [ ] **Step registry / extensibility** — `internal/steps/registry.go` exposes `Register`, `IsRegistered`, and the `Handler`/`Request` types. Built-in handlers live in `internal/steps/{transform,shell,wait}` and self-register from `init`. New step types should be added by following the same pattern and adding a blank import in `internal/daemon/daemon.go`.
+- [ ] **Per-step env injection** — Add an `Env` field to `workflows.Step` whose values are either a literal string or a secret reference (`{secret: <id>}`). Populate `cmd.Env` in `internal/steps/shell/shell.go` from this map merged with a minimal default env (`PATH`, `HOME`, `USER`, `TERM`) instead of inheriting the daemon's full environment. Secret values resolve through `internal/secrets`.
+- [ ] **Per-step working directory** — Add a `Workdir` field to `workflows.Step` (template-rendered against the run context, like `Input`) and set `cmd.Dir` in `internal/steps/shell/shell.go`. Default to a per-run scratch directory when unset, surfaced via a template variable such as `{{ runloop.workspace }}`.
+- [ ] **Built-in coding-agent step** — Register a typed handler under `internal/steps/claude/` (or similar, per harness) that wraps the Claude CLI behind a step shape rather than requiring users to assemble it as raw shell. Reuse the registry pattern from `transform`/`shell`/`wait` and depend on the env-injection task above for credential plumbing.

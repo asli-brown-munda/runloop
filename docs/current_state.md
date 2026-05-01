@@ -358,6 +358,40 @@ The current run engine:
 - renders sinks
 - marks runs and dispatches completed or failed
 
+## Step Execution
+
+Step execution is registry based. The dispatcher in:
+
+```text
+internal/steps/executor.go
+```
+
+renders `step.Input` against the run context, then looks up a `Handler` for `step.Type` from the step registry defined in:
+
+```text
+internal/steps/registry.go
+```
+
+Built-in step packages register themselves from `init` functions. The daemon imports the built-in step packages so their handlers are available:
+
+```text
+internal/steps/transform
+internal/steps/shell
+internal/steps/wait
+```
+
+Each handler receives a `steps.Request` carrying the parsed step, the owning workflow, the rendered input, and the templating context. Handlers own their own policy: the shell handler enforces `permissions.shell` itself rather than the dispatcher gating it.
+
+The daemon also wires the step registry into workflow validation:
+
+```go
+workflows.StepTypeValidator = steps.IsRegistered
+```
+
+That hook lets `internal/workflows/validator.go` reject unsupported step types without creating an import cycle from `workflows` to `steps`.
+
+The current in-process step extension point is compile-time registration. A new step type must be implemented in Go, call `steps.Register` from an `init` function, and be imported into the daemon binary. No edits to `executor.go` or `validator.go` are needed.
+
 ## Trigger Evaluation
 
 Trigger evaluation is in:
