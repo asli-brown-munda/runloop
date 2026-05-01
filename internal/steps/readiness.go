@@ -34,6 +34,12 @@ func CheckReadiness(ctx context.Context, wf workflows.Workflow, opts ReadinessOp
 	}
 	var diagnostics []Diagnostic
 	for _, step := range wf.Steps {
+		if step.Type == "git_checkout" {
+			if _, err := lookPath("git"); err != nil {
+				diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticError, StepID: step.ID, Message: "Git binary 'git' was not found in PATH"})
+			}
+			continue
+		}
 		if step.Type != "claude" {
 			continue
 		}

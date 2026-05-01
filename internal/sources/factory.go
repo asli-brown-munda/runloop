@@ -2,12 +2,19 @@ package sources
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
 
 	"runloop/internal/config"
+	"runloop/internal/secrets"
 )
 
-type Constructor func(id string, cfg map[string]any) (Source, error)
+type BuildOptions struct {
+	Secrets    secrets.Resolver
+	HTTPClient *http.Client
+}
+
+type Constructor func(id string, cfg map[string]any, opts BuildOptions) (Source, error)
 
 var (
 	registryMu sync.RWMutex
@@ -27,7 +34,7 @@ func lookup(typ string) (Constructor, bool) {
 	return ctor, ok
 }
 
-func Build(entry config.SourceEntry) (Source, error) {
+func Build(entry config.SourceEntry, opts BuildOptions) (Source, error) {
 	if entry.ID == "" {
 		return nil, fmt.Errorf("source entry missing id")
 	}
@@ -38,5 +45,5 @@ func Build(entry config.SourceEntry) (Source, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown source type %q for source %q", entry.Type, entry.ID)
 	}
-	return ctor(entry.ID, entry.Config)
+	return ctor(entry.ID, entry.Config, opts)
 }

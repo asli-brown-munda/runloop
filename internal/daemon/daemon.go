@@ -16,10 +16,12 @@ import (
 	"runloop/internal/sinks"
 	"runloop/internal/sources"
 	_ "runloop/internal/sources/filesystem"
+	_ "runloop/internal/sources/github"
 	"runloop/internal/sources/manual"
 	_ "runloop/internal/sources/schedule"
 	"runloop/internal/steps"
 	_ "runloop/internal/steps/claude"
+	_ "runloop/internal/steps/gitcheckout"
 	_ "runloop/internal/steps/shell"
 	_ "runloop/internal/steps/transform"
 	_ "runloop/internal/steps/wait"
@@ -76,7 +78,13 @@ func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
 		_ = logFile.Close()
 		return nil, err
 	}
-	manager, err := sources.LoadManager(sourcesFile)
+	secretResolver, err := secrets.NewFileResolver(runtimePaths.ConfigDir)
+	if err != nil {
+		_ = st.Close()
+		_ = logFile.Close()
+		return nil, err
+	}
+	manager, err := sources.LoadManager(sourcesFile, sources.BuildOptions{Secrets: secretResolver})
 	if err != nil {
 		_ = st.Close()
 		_ = logFile.Close()
@@ -91,12 +99,6 @@ func New(ctx context.Context, logger *slog.Logger) (*Daemon, error) {
 	}
 	inboxSvc := inbox.NewService(st)
 	evaluator := triggers.NewEvaluator(st)
-	secretResolver, err := secrets.NewFileResolver(runtimePaths.ConfigDir)
-	if err != nil {
-		_ = st.Close()
-		_ = logFile.Close()
-		return nil, err
-	}
 	engine := runs.NewEngine(st, artifacts.New(runtimePaths.ArtifactDir), runs.WithSecrets(secretResolver))
 	server := web.NewServer(cfg, runtimePaths, st, manager, inboxSvc, evaluator, engine, secretResolver, runtimeLogger)
 	runner := newSourceRunner(manager, st, inboxSvc, evaluator, engine, runtimeLogger)

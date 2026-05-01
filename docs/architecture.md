@@ -12,7 +12,7 @@ Sources -> Inbox -> Trigger Evaluator -> Dispatch Queue -> Workflow Run Engine -
 
 ### Sources
 
-Sources discover local or manually submitted items. Filesystem sources use OS file notifications, schedule sources use timed wakeups, and manual items arrive through the local API. Source state tracks source-specific cursors, external IDs, normalization metadata, and deduplication inputs.
+Sources discover local or manually submitted items. Filesystem sources use OS file notifications, schedule sources use timed wakeups, GitHub PR sources use timed GraphQL polling, and manual items arrive through the local API. Source state tracks source-specific cursors, external IDs, normalization metadata, and deduplication inputs.
 
 ### Inbox
 
@@ -34,7 +34,7 @@ The workflow run engine creates and advances workflow runs. It owns run status, 
 
 ### Step Executor
 
-The step executor dispatches each step to a handler resolved from a registry rather than a hardcoded switch. Built-in step types are `transform`, `shell`, and `wait`, each implemented in its own subpackage that self-registers from an `init` function. Steps receive workflow context, inbox context, and previous step output according to the workflow definition. New step types are added by implementing a handler, calling `steps.Register`, and importing the package into the daemon binary; the workflow validator consults the same registry so unsupported types are rejected at load time.
+The step executor dispatches each step to a handler resolved from a registry rather than a hardcoded switch. Built-in step types are `transform`, `shell`, `wait`, `claude`, and `git_checkout`, each implemented in its own subpackage that self-registers from an `init` function. Steps receive workflow context, inbox context, and previous step output according to the workflow definition. New step types are added by implementing a handler, calling `steps.Register`, and importing the package into the daemon binary; the workflow validator consults the same registry so unsupported types are rejected at load time.
 
 ### Sinks
 
@@ -81,7 +81,5 @@ This API is local development plumbing for the daemon. It is not a remote contro
 - Enterprise policy engine
 - Full secret broker
 - Advanced scheduling UI
-- GitHub source
-- LLM step
 - Approval UI
 - Complex RBAC

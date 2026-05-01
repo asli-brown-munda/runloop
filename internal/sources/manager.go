@@ -19,8 +19,12 @@ func NewManager(items ...Source) *Manager {
 	return m
 }
 
-func LoadManager(file config.SourcesFile) (*Manager, error) {
+func LoadManager(file config.SourcesFile, opts ...BuildOptions) (*Manager, error) {
 	m := &Manager{sources: map[string]Source{}}
+	buildOpts := BuildOptions{}
+	if len(opts) > 0 {
+		buildOpts = opts[0]
+	}
 	for _, entry := range file.Sources {
 		if !entry.Enabled {
 			continue
@@ -28,7 +32,7 @@ func LoadManager(file config.SourcesFile) (*Manager, error) {
 		if _, exists := m.sources[entry.ID]; exists {
 			return nil, fmt.Errorf("duplicate source id %q", entry.ID)
 		}
-		source, err := Build(entry)
+		source, err := Build(entry, buildOpts)
 		if err != nil {
 			return nil, err
 		}

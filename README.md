@@ -90,7 +90,5 @@ Runloop is intentionally not building these features in the MVP documentation mi
 - Enterprise policy engine
 - Full secret broker
 - Advanced scheduling UI
-- GitHub source
-- LLM step
 - Approval UI
 - Complex RBAC

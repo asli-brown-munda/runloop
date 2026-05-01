@@ -419,6 +419,7 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - Filesystem source ignores non-matching glob entries.
 - Schedule source accepts exactly one of `every` or `cron`.
 - Schedule source establishes a baseline before emitting later ticks.
+- GitHub PR source resolves its token from `secrets.yaml`, expands `@me`, and emits `github_pr_unresolved_review_threads` only for PRs with unresolved review threads.
 - Source cursors round trip through `source_cursors` and advance after successful sync.
 
 ### Trigger Evaluation And Dispatch
@@ -432,15 +433,15 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 ### Run Engine, Steps, And Sinks
 
 - A queued dispatch creates one workflow run.
-- Built-in step types `transform`, `shell`, `wait`, and `claude` self-register through `internal/steps/registry.go`; the executor dispatches by `step.Type` and the workflow validator rejects step types that are not registered.
+- Built-in step types `transform`, `shell`, `wait`, `claude`, and `git_checkout` self-register through `internal/steps/registry.go`; the executor dispatches by `step.Type` and the workflow validator rejects step types that are not registered.
 - Transform steps receive inbox context and previous step output where applicable.
 - Shell steps fail unless `permissions.shell` is enabled (the shell handler enforces the gate itself).
 - Shell steps receive only minimal default environment variables plus explicit `step.env` entries.
 - Step env entries resolve literal values, direct `{ secret: <id> }` values, and credential profile `{ from: <profile.ENV_NAME> }` values.
 - File-backed secrets reject absolute paths, paths escaping the config directory, and group- or world-readable secret files.
-- Shell and Claude steps default to the per-run `{{ runloop.workspace }}` directory when `workdir` is unset.
+- Shell and Claude steps default to the per-run `{{ runloop.workspace }}` directory when `workdir` is unset; `git_checkout` defaults to `{{ runloop.workspace }}/repo`.
 - Claude steps support `auth: login`, `auth: apiKey`, and `auth: auto`; API-key auth resolves `profiles.claude` `ANTHROPIC_API_KEY`.
-- Claude readiness diagnostics distinguish static workflow validity from local machine readiness.
+- Claude and git checkout readiness diagnostics distinguish static workflow validity from local machine readiness.
 - Wait steps honor configured duration behavior.
 - Failed steps mark the run and dispatch failed.
 - Completed runs write sink outputs and artifact records.

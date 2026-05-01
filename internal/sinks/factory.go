@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
 	"runloop/internal/artifacts"
 	"runloop/internal/workflows"
 )
+
+var sinkTemplatePattern = regexp.MustCompile(`\{\{\s*([^}]+?)\s*\}\}`)
 
 type Request struct {
 	Root  string
@@ -108,11 +111,55 @@ func renderMarkdown(req Request) (Output, error) {
 	if err != nil {
 		return Output{}, err
 	}
+	if req.Sink.Body != "" {
+		body, err := renderSinkBody(req.Sink.Body, req.Data)
+		if err != nil {
+			return Output{}, err
+		}
+		return Output{Path: path, Body: body}, nil
+	}
 	content := "# Runloop Report\n\n"
 	for key, value := range req.Data {
 		content += fmt.Sprintf("- %s: %v\n", key, value)
 	}
 	return Output{Path: path, Body: content}, nil
+}
+
+func renderSinkBody(input string, data map[string]any) (string, error) {
+	var renderErr error
+	out := sinkTemplatePattern.ReplaceAllStringFunc(input, func(match string) string {
+		parts := sinkTemplatePattern.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		path := strings.TrimSpace(parts[1])
+		value, ok := lookupData(data, path)
+		if !ok {
+			renderErr = fmt.Errorf("missing sink template value for %q", path)
+			return ""
+		}
+		return fmt.Sprint(value)
+	})
+	if renderErr != nil {
+		return "", renderErr
+	}
+	return out, nil
+}
+
+func lookupData(data map[string]any, path string) (any, bool) {
+	parts := strings.Split(path, ".")
+	var current any = data
+	for _, part := range parts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = m[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
 }
 
 func init() {

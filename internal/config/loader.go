@@ -99,6 +99,14 @@ func WriteInitial(paths Paths) error {
   #   enabled: true
   #   config:
   #     every: 1m
+  # - id: github-assigned-prs
+  #   type: github_pr
+  #   enabled: false
+  #   config:
+  #     tokenSecret: github-token
+  #     query: "is:pr is:open assignee:@me"
+  #     every: 5m
+  #     pageSize: 50
 `)
 	if err := writeIfMissing(paths.SourcesFile, sourcesYAML, 0o644); err != nil {
 		return err
@@ -107,6 +115,8 @@ func WriteInitial(paths Paths) error {
 # secrets:
 #   anthropic-api-key:
 #     file: secrets/anthropic-api-key
+#   github-token:
+#     file: secrets/github-token
 #
 # profiles:
 #   claude:

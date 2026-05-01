@@ -17,7 +17,7 @@ const (
 )
 
 func init() {
-	sources.Register(Type, func(id string, cfg map[string]any) (sources.Source, error) {
+	sources.Register(Type, func(id string, cfg map[string]any, opts sources.BuildOptions) (sources.Source, error) {
 		return New(id, cfg)
 	})
 }

@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +23,26 @@ func TestReadinessWarnsForClaudeAutoWithoutProfile(t *testing.T) {
 	}
 	if diagnostics[0].Level != DiagnosticWarning {
 		t.Fatalf("level = %q", diagnostics[0].Level)
+	}
+}
+
+func TestReadinessErrorsForMissingGitCheckoutBinary(t *testing.T) {
+	diagnostics := CheckReadiness(context.Background(), workflows.Workflow{
+		Steps: []workflows.Step{{ID: "checkout", Type: "git_checkout"}},
+	}, ReadinessOptions{
+		LookPath: func(name string) (string, error) {
+			if name == "git" {
+				return "", fmt.Errorf("missing")
+			}
+			return "/usr/bin/" + name, nil
+		},
+	})
+
+	if len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	if diagnostics[0].Level != DiagnosticError || diagnostics[0].StepID != "checkout" {
+		t.Fatalf("diagnostics = %#v", diagnostics)
 	}
 }
 

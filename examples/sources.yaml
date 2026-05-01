@@ -2,3 +2,11 @@ sources:
   - id: manual
     type: manual
     enabled: true
+  # - id: github-assigned-prs
+  #   type: github_pr
+  #   enabled: false
+  #   config:
+  #     tokenSecret: github-token
+  #     query: "is:pr is:open assignee:@me"
+  #     every: 5m
+  #     pageSize: 50

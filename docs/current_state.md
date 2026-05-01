@@ -242,6 +242,7 @@ Built-in source packages register themselves from `init` functions. The daemon i
 
 ```text
 internal/sources/filesystem
+internal/sources/github
 internal/sources/schedule
 ```
 
@@ -302,6 +303,28 @@ cron
 
 The first sync establishes a baseline timestamp. Later syncs emit synthetic `schedule_tick` inbox candidates for elapsed schedule times and persist the latest fired timestamp as the cursor.
 
+GitHub PR source support is in:
+
+```text
+internal/sources/github/github.go
+```
+
+GitHub PR source config:
+
+```yaml
+sources:
+  - id: github-assigned-prs
+    type: github_pr
+    enabled: true
+    config:
+      tokenSecret: github-token
+      query: "is:pr is:open assignee:@me"
+      every: 5m
+      pageSize: 50
+```
+
+The GitHub source uses the GraphQL API, resolves `tokenSecret` through `secrets.yaml`, expands `@me` to the authenticated viewer login, and emits one inbox candidate per PR. PRs with unresolved review threads use entity type `github_pr_unresolved_review_threads`; PRs without unresolved threads use `github_pr_review_clean`, allowing workflows to trigger only on actionable review feedback.
+
 The source runner is in:
 
 ```text
@@ -313,7 +336,7 @@ Current source runner behavior:
 - ensures a row exists in `sources` for each registered source
 - skips running `manual`
 - performs one startup sync for each non-manual source
-- waits on `ChangeNotifier` sources such as `filesystem` instead of polling them
+- waits on `ChangeNotifier` sources such as `filesystem` and `github_pr` instead of polling them
 - uses a 5-second ticker only for sources without change notifications, such as `schedule`
 - loads and stores source cursors through `source_cursors`
 - upserts emitted inbox candidates
@@ -333,7 +356,7 @@ Items currently enter the inbox through two paths:
 - Manual submissions call `POST /api/inbox`, usually through `runloop inbox add`. The API builds a `manual.Candidate`, upserts it through the inbox service, and evaluates triggers only when the upsert creates a changed version.
 - Configured non-manual sources are loaded from `sources.yaml` and run by `internal/daemon/sourcerunner.go`. Each source `Sync` returns `InboxCandidate` values. The runner upserts each candidate, evaluates triggers for changed versions, drains queued workflow runs, and persists the source cursor when it advances.
 
-The built-in non-manual sources today are `filesystem` and `schedule`. The manual source is always available but is not polled by the source runner.
+The built-in non-manual sources today are `filesystem`, `schedule`, and `github_pr`. The manual source is always available but is not polled by the source runner.
 
 Important rule:
 
@@ -424,6 +447,7 @@ internal/steps/transform
 internal/steps/shell
 internal/steps/wait
 internal/steps/claude
+internal/steps/gitcheckout
 ```
 
 Each handler receives a `steps.Request` carrying the parsed step, the owning workflow, the rendered input, the templating context, minimal environment defaults, and the configured secret resolver. Handlers own their own policy: the shell and Claude handlers enforce `permissions.shell` themselves rather than the dispatcher gating them.
@@ -442,7 +466,7 @@ That path is available to templates as:
 {{ runloop.workspace }}
 ```
 
-Shell and Claude steps default to that workspace when `workdir` is unset.
+Shell and Claude steps default to that workspace when `workdir` is unset. The `git_checkout` step checks out a PR head into that workspace, verifies the expected head SHA when provided, and returns the checkout path for later steps as `{{ steps.<id>.path }}`.
 
 File-backed secrets and credential profiles are implemented in:
 
@@ -479,7 +503,7 @@ profiles:
         secret: anthropic-api-key
 ```
 
-The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports `auth: login`, `auth: apiKey`, and `auth: auto`. Login auth relies on Claude CLI state under `HOME`; API-key auth injects `ANTHROPIC_API_KEY` from `profiles.claude`; auto auth uses the profile when configured and otherwise falls back to CLI login state. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary or missing required API-key profile.
+The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports `auth: login`, `auth: apiKey`, and `auth: auto`. Login auth relies on Claude CLI state under `HOME`; API-key auth injects `ANTHROPIC_API_KEY` from `profiles.claude`; auto auth uses the profile when configured and otherwise falls back to CLI login state. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary, missing `git` binary for `git_checkout`, or missing required API-key profile.
 
 The daemon also wires the step registry into workflow validation:
 
@@ -718,6 +742,8 @@ The current committed baseline includes:
 - `runloop inbox archive <id>` and `runloop inbox ignore <id>` CLI subcommands
 - Enriched `GET /api/inbox/{id}` response (item + latest version payload + dispatches/runs)
 - Shell and Claude step execution with a minimal inherited environment and per-run workspace
-- Claude step readiness diagnostics in `runloop workflows show <id>`
+- GitHub PR source support for unresolved review-thread workflows
+- Git checkout step support for local PR workspace preparation
+- Claude and git checkout readiness diagnostics in `runloop workflows show <id>`
 - Inbox versioning contract tests in `internal/inbox/service_test.go`
 - Local development testing guidance in `docs/local-development-testing.md`

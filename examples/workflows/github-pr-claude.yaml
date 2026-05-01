@@ -1,0 +1,43 @@
+id: github-pr-claude
+name: GitHub PR Claude
+enabled: false
+
+permissions:
+  shell: true
+
+triggers:
+  - type: inbox
+    source: github-assigned-prs
+    entityType: github_pr_unresolved_review_threads
+    policy: once_per_version
+
+steps:
+  - id: checkout
+    type: git_checkout
+    timeout: 2m
+    input:
+      repoURL: "{{ inbox.normalized.repository.cloneURL }}"
+      pullNumber: "{{ inbox.normalized.number }}"
+      pullRef: "{{ inbox.normalized.pullRef }}"
+      headSHA: "{{ inbox.normalized.headSHA }}"
+
+  - id: agent
+    type: claude
+    timeout: 30m
+    workdir: "{{ steps.checkout.path }}"
+    permissionMode: acceptEdits
+    prompt: |
+      Address the unresolved GitHub PR review threads in this local checkout.
+
+      Do not push, comment on GitHub, or create a commit. Make the smallest code edits needed.
+      If a Claude Code skill should be used, invoke it from this prompt according to the local Claude Code configuration.
+
+      {{ inbox.normalized.reviewPromptMarkdown }}
+
+sinks:
+  - type: markdown
+    path: github-pr-claude.md
+    body: |
+      # GitHub PR Claude Run
+
+      Claude finished with exit code {{ exitCode }}.

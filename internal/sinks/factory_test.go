@@ -45,6 +45,25 @@ func TestBuiltInSinksRenderOutputs(t *testing.T) {
 	}
 }
 
+func TestMarkdownSinkRendersConfiguredBody(t *testing.T) {
+	output, err := Render(Request{
+		Root:  t.TempDir(),
+		RunID: 7,
+		Sink: workflows.Sink{
+			Type: "markdown",
+			Path: "github-pr-claude.md",
+			Body: "# GitHub PR Claude Run\n\nClaude finished with exit code {{ exitCode }}.\n",
+		},
+		Data: map[string]any{"exitCode": 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Body != "# GitHub PR Claude Run\n\nClaude finished with exit code 0.\n" {
+		t.Fatalf("markdown body = %q", output.Body)
+	}
+}
+
 func TestRenderRejectsUnknownAndUnsafeSinks(t *testing.T) {
 	root := t.TempDir()
 
