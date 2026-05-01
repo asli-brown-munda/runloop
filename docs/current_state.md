@@ -1,13 +1,14 @@
 # Current State
 
-Runloop currently has a working development baseline for the manual workflow path and configured sources:
+Runloop currently has a working development baseline for the manual workflow path, configured sources, configured runtime paths, and local step execution:
 
 ```text
 manual inbox item -> trigger evaluation -> dispatch -> workflow run -> transform step -> markdown sink artifact
 configured source -> inbox item -> trigger evaluation -> dispatch -> workflow run
+shell/claude step -> isolated env + per-run workspace + step artifacts
 ```
 
-The setup is intentionally small. It establishes the daemon, CLI, config paths, SQLite schema, workflow loading, workflow inspection and enablement controls, source loading, source change detection, trigger matching, dispatch processing, step execution, and artifact writing.
+The setup is intentionally small. It establishes the daemon, CLI, config paths and overrides, SQLite schema, workflow loading, workflow inspection and enablement controls, source loading, source change detection, trigger matching, dispatch processing, step execution, file-backed secrets, credential profiles, and artifact writing.
 
 ## Binaries
 
@@ -86,7 +87,51 @@ internal/workflows/parser.go
 internal/workflows/validator.go
 ```
 
-Current validation rejects missing workflow IDs or names, workflows without triggers or steps, duplicate step IDs, unsupported step types, unsupported sink types, and unknown trigger fields. Unknown trigger fields are reported with YAML line context so authoring mistakes point back to the source file.
+Current validation rejects missing workflow IDs or names, workflows without triggers or steps, duplicate step IDs, unsupported step types, unsupported sink types, malformed step environment entries, and unknown trigger fields. Unknown trigger fields are reported with YAML line context so authoring mistakes point back to the source file.
+
+## Config Loading
+
+Default config paths are derived from `HOME` and the XDG environment variables:
+
+```text
+XDG_CONFIG_HOME -> ~/.config
+XDG_STATE_HOME  -> ~/.local/state
+XDG_DATA_HOME   -> ~/.local/share
+```
+
+The config schema is defined in:
+
+```text
+internal/config/schema.go
+```
+
+The config loader is in:
+
+```text
+internal/config/loader.go
+```
+
+Important behavior:
+
+- Missing `config.yaml` returns defaults.
+- Unknown top-level and nested config keys are rejected with a single-line error.
+- `models` is intentionally open-ended and allows arbitrary model-specific keys.
+- Empty daemon bind address, port, state dir, artifact dir, log dir, sources file, and workflow dir fields fall back to defaults.
+- Explicit `daemon.stateDir`, `daemon.artifactDir`, and `daemon.logDir` are honored by the daemon for the database, artifacts, and runtime log file.
+
+`runloop init` creates:
+
+```text
+~/.config/runloop/config.yaml
+~/.config/runloop/sources.yaml
+~/.config/runloop/secrets.yaml
+~/.config/runloop/secrets/
+~/.config/runloop/workflows/manual-hello.yaml
+~/.config/runloop/auth.token
+~/.local/state/runloop/
+~/.local/state/runloop/logs/
+~/.local/share/runloop/artifacts/
+```
 
 ## Workflow Persistence
 
@@ -399,7 +444,42 @@ That path is available to templates as:
 
 Shell and Claude steps default to that workspace when `workdir` is unset.
 
-The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports CLI login state via `HOME` and can also inject `ANTHROPIC_API_KEY` from the `profiles.claude` credential profile. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary or missing required API-key profile.
+File-backed secrets and credential profiles are implemented in:
+
+```text
+internal/secrets/service.go
+```
+
+Secrets are configured in:
+
+```text
+~/.config/runloop/secrets.yaml
+```
+
+Current secrets behavior:
+
+- secret IDs map to files relative to the Runloop config directory
+- absolute paths and paths escaping the config directory are rejected
+- secret files must not be group- or world-readable
+- secret values are trimmed of trailing newlines on read
+- `step.env` can use literal values, `{ secret: <id> }`, or `{ from: <profile.ENV_NAME> }`
+- credential profiles map environment variable names to secret IDs
+
+Example:
+
+```yaml
+secrets:
+  anthropic-api-key:
+    file: secrets/anthropic-api-key
+
+profiles:
+  claude:
+    env:
+      ANTHROPIC_API_KEY:
+        secret: anthropic-api-key
+```
+
+The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports `auth: login`, `auth: apiKey`, and `auth: auto`. Login auth relies on Claude CLI state under `HOME`; API-key auth injects `ANTHROPIC_API_KEY` from `profiles.claude`; auto auth uses the profile when configured and otherwise falls back to CLI login state. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary or missing required API-key profile.
 
 The daemon also wires the step registry into workflow validation:
 
@@ -513,12 +593,16 @@ runloop inbox add --source external-system --external-id item-1 --title "Externa
 ```text
 ~/.config/runloop/config.yaml
 ~/.config/runloop/sources.yaml
+~/.config/runloop/secrets.yaml
+~/.config/runloop/secrets/
 ~/.config/runloop/workflows/
 ~/.config/runloop/auth.token
 ~/.local/state/runloop/runloop.db
 ~/.local/state/runloop/logs/
 ~/.local/share/runloop/artifacts/
 ```
+
+`daemon.stateDir`, `daemon.artifactDir`, and `daemon.logDir` in `config.yaml` override the default runtime state, artifact, and log locations.
 
 Artifact layout:
 
@@ -530,10 +614,13 @@ artifacts/
       normalized.json
   runs/
     run_<id>/
+      workspace/
       steps/
         <step_id>/
           input.json
           output.json
+          stdout.log   # shell/claude steps
+          stderr.log   # shell/claude steps
       sinks/
         report.md
 ```
@@ -623,9 +710,14 @@ make build
 The current committed baseline includes:
 
 - Filesystem watcher support through `fsnotify`
+- XDG-style default paths and explicit daemon runtime path overrides
+- Strict config loading for known config fields, with open-ended `models` config
+- Initial `secrets.yaml` generation plus file-backed secrets and credential profiles
 - Runtime workflow YAML reloads through `internal/daemon/workflowwatcher.go`
-- Workflow validation for duplicate step IDs, unsupported step and sink types, and unknown trigger fields with line context
+- Workflow validation for duplicate step IDs, unsupported step and sink types, malformed step env values, and unknown trigger fields with line context
 - `runloop inbox archive <id>` and `runloop inbox ignore <id>` CLI subcommands
 - Enriched `GET /api/inbox/{id}` response (item + latest version payload + dispatches/runs)
+- Shell and Claude step execution with a minimal inherited environment and per-run workspace
+- Claude step readiness diagnostics in `runloop workflows show <id>`
 - Inbox versioning contract tests in `internal/inbox/service_test.go`
 - Local development testing guidance in `docs/local-development-testing.md`

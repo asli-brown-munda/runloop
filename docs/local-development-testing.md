@@ -53,8 +53,53 @@ Expected result:
 - `workflows list` includes `manual-hello`.
 - `sources list` includes `manual`.
 - `runs list` succeeds, even when empty.
+- `runloop init` created `config.yaml`, `sources.yaml`, `secrets.yaml`, `auth.token`, the workflow directory, the secrets directory, state directories, the log directory, and the artifact directory under the temporary `HOME`.
 
 Stop the daemon with `Ctrl-C` when finished.
+
+## Config And Runtime Path Override Smoke Test
+
+Use a fresh temporary `HOME` so the default path assertions are easy to inspect:
+
+```sh
+make build
+tmp=$(mktemp -d)
+state=$(mktemp -d)
+artifacts=$(mktemp -d)
+logs=$(mktemp -d)
+HOME="$tmp" ./bin/runloop init
+cat > "$tmp/.config/runloop/config.yaml" <<EOF
+daemon:
+  bindAddress: 127.0.0.1
+  port: 8765
+  stateDir: $state
+  artifactDir: $artifacts
+  logDir: $logs
+sources:
+  file: $tmp/.config/runloop/sources.yaml
+workflows:
+  dir: $tmp/.config/runloop/workflows
+models: {}
+EOF
+HOME="$tmp" ./bin/runloopd
+```
+
+In another terminal:
+
+```sh
+HOME="$tmp" ./bin/runloop inbox add --source manual --external-id configured-paths --title "Configured Paths" --json '{"message":"hello"}'
+test -f "$state/runloop.db"
+find "$artifacts" -path '*/sinks/report.md' -print
+test -f "$logs/runloopd.log"
+```
+
+Expected result:
+
+- The daemon starts using the bind address, port, sources file, and workflows directory from `config.yaml`.
+- The SQLite database is created under `daemon.stateDir`.
+- Run artifacts are written under `daemon.artifactDir`.
+- `runloopd.log` is written under `daemon.logDir`.
+- Unknown config keys cause startup to fail with a single-line `invalid config` error.
 
 ## Manual Inbox Workflow Smoke Test
 
@@ -107,9 +152,32 @@ Expected result:
 - `enable manual-hello` sets `enabled` to `true`.
 - Enable and disable operations update `workflow_definitions.enabled` without creating new workflow versions.
 
-## Step Environment And Claude Readiness Smoke Test
+## Step Environment, Secrets, And Claude Readiness Smoke Test
 
-Use a temporary workflow to verify shell environment isolation, the per-run workspace, and Claude readiness diagnostics.
+Use a temporary workflow to verify shell environment isolation, file-backed secrets, credential profiles, the per-run workspace, and Claude readiness diagnostics. Stop any previous daemon using this temporary `HOME` before this section; the secrets resolver is initialized when the daemon starts.
+
+Before starting the daemon, configure a local test secret and profile:
+
+```sh
+mkdir -p "$tmp/.config/runloop/secrets"
+printf "profile-secret\n" > "$tmp/.config/runloop/secrets/profile-token"
+chmod 600 "$tmp/.config/runloop/secrets/profile-token"
+cat > "$tmp/.config/runloop/secrets.yaml" <<'EOF'
+secrets:
+  profile-token:
+    file: secrets/profile-token
+
+profiles:
+  demo:
+    env:
+      PROFILE_TOKEN:
+        secret: profile-token
+  claude:
+    env:
+      ANTHROPIC_API_KEY:
+        secret: profile-token
+EOF
+```
 
 Create `$tmp/.config/runloop/workflows/shell-workspace.yaml`:
 
@@ -129,9 +197,13 @@ triggers:
 steps:
   - id: shell-check
     type: shell
-    command: 'printf "visible=%s\nsecret=%s\npwd=%s\n" "$VISIBLE" "${RUNLOOP_DAEMON_SECRET:-missing}" "$(pwd)"'
+    command: 'printf "visible=%s\ndaemon_secret=%s\nprofile=%s\ndirect=%s\npwd=%s\n" "$VISIBLE" "${RUNLOOP_DAEMON_SECRET:-missing}" "$PROFILE_TOKEN" "$DIRECT_SECRET" "$(pwd)"'
     env:
       VISIBLE: ok
+      PROFILE_TOKEN:
+        from: demo.PROFILE_TOKEN
+      DIRECT_SECRET:
+        secret: profile-token
 
 sinks:
   - type: json
@@ -154,8 +226,10 @@ find "$tmp/.local/share/runloop/artifacts/runs" -path '*shell-check/stdout.log' 
 Expected result:
 
 - `visible=ok` is present.
-- `secret=missing` is present, proving the shell step did not inherit the daemon's full environment.
+- `daemon_secret=missing` is present, proving the shell step did not inherit the daemon's full environment.
+- `profile=profile-secret` and `direct=profile-secret` are present, proving profile and direct secret environment resolution work.
 - `pwd` points inside `artifacts/runs/run_<id>/workspace` unless the step set `workdir`.
+- Changing the secret file to a group- or world-readable mode causes secret resolution to fail.
 
 Create `$tmp/.config/runloop/workflows/claude-readiness.yaml`:
 
@@ -190,6 +264,7 @@ Expected result:
 - The workflow loads as normal because static validation stays portable.
 - The `readiness` field reports local machine diagnostics.
 - If `claude` is not on `PATH`, readiness includes an error.
+- If `claude` is on `PATH` and `profiles.claude` resolves `ANTHROPIC_API_KEY`, `auth: auto` is ready to use API-key auth.
 - If `claude` is on `PATH` but no `profiles.claude` API-key profile exists, `auth: auto` reports a warning and will rely on Claude CLI login state under `HOME`.
 - If the workflow uses `auth: apiKey`, a missing or broken `profiles.claude` entry is a readiness error.
 
@@ -299,6 +374,10 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 ### Config And Startup
 
 - `runloop init` creates config, sources file, workflow file, auth token, state directories, log directory, and artifact directory.
+- `runloop init` creates `secrets.yaml` and the `secrets/` directory.
+- Default paths use XDG-style locations and do not fall back to the system temp directory unless explicitly configured.
+- `daemon.stateDir`, `daemon.artifactDir`, and `daemon.logDir` are honored by database, artifact, and log writes.
+- Unknown config fields are rejected, while arbitrary nested `models` fields remain allowed.
 - `runloopd` starts from a clean temporary `HOME`.
 - `runloop health` succeeds against the local daemon.
 - CLI and daemon use the same bind address, port, and auth token from the temporary config.
@@ -313,7 +392,7 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - Enabling or disabling a workflow updates only `workflow_definitions.enabled`.
 - Disabled workflows are excluded from trigger evaluation.
 - Unknown workflow IDs return a not-found error through workflow-specific API endpoints.
-- Workflow validation rejects duplicate step IDs, unsupported step types, unsupported sink types, and unknown trigger fields with YAML line context.
+- Workflow validation rejects duplicate step IDs, unsupported step types, unsupported sink types, malformed step env values, and unknown trigger fields with YAML line context.
 
 ### Workflow CLI And API
 
@@ -357,7 +436,10 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - Transform steps receive inbox context and previous step output where applicable.
 - Shell steps fail unless `permissions.shell` is enabled (the shell handler enforces the gate itself).
 - Shell steps receive only minimal default environment variables plus explicit `step.env` entries.
+- Step env entries resolve literal values, direct `{ secret: <id> }` values, and credential profile `{ from: <profile.ENV_NAME> }` values.
+- File-backed secrets reject absolute paths, paths escaping the config directory, and group- or world-readable secret files.
 - Shell and Claude steps default to the per-run `{{ runloop.workspace }}` directory when `workdir` is unset.
+- Claude steps support `auth: login`, `auth: apiKey`, and `auth: auto`; API-key auth resolves `profiles.claude` `ANTHROPIC_API_KEY`.
 - Claude readiness diagnostics distinguish static workflow validity from local machine readiness.
 - Wait steps honor configured duration behavior.
 - Failed steps mark the run and dispatch failed.
@@ -387,3 +469,4 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - If filesystem changes are not detected, confirm the source directory exists before the daemon starts and that the changed file matches the configured glob.
 - If no workflow dispatch is created, confirm the workflow is enabled and the trigger source/entity type matches the inbox item.
 - If workflow edits do not reload, confirm the file extension is `.yaml` or `.yml` and check daemon logs for validation errors.
+- If a secret or credential profile does not resolve, confirm `secrets.yaml` points to a relative path under the Runloop config directory and that the target file mode is `0600`.
