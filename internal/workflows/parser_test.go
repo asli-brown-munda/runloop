@@ -20,6 +20,35 @@ func TestParseFileAcceptsManualHelloExample(t *testing.T) {
 	}
 }
 
+func TestWorkflowStepConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "workflow.yaml")
+	data := []byte(`id: claude-connection
+name: Claude Connection
+enabled: true
+permissions:
+  shell: true
+triggers:
+  - type: inbox
+steps:
+  - id: agent
+    type: claude
+    auth: auto
+    connection: claude.default
+    prompt: hello
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wf, _, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := wf.Steps[0].Connection; got != "claude.default" {
+		t.Fatalf("connection = %q, want %q", got, "claude.default")
+	}
+}
+
 func TestValidateRejectsDuplicateStepIDs(t *testing.T) {
 	err := Validate(Workflow{
 		ID:       "x",

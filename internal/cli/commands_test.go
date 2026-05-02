@@ -63,3 +63,37 @@ func TestWorkflowsCommandIncludesManagementCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionsCommandAppearsInRootHelp(t *testing.T) {
+	cmd := NewRootCommand("runloop")
+	cmd.SetArgs([]string{"--help"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	help := out.String()
+	if !strings.Contains(help, "connections") {
+		t.Fatalf("root help missing connections command:\n%s", help)
+	}
+}
+
+func TestConnectionsCommandIncludesListAndTest(t *testing.T) {
+	cmd := NewRootCommand("runloop")
+	cmd.SetArgs([]string{"connections", "--help"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	help := out.String()
+	for _, want := range []string{"list", "test"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("connections help missing %q:\n%s", want, help)
+		}
+	}
+}

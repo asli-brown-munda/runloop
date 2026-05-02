@@ -26,6 +26,8 @@ type Runner interface {
 
 var commandRunner Runner = execRunner{}
 
+const anthropicAPIKeyEnv = "ANTHROPIC_API_KEY"
+
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, command string, args []string, env []string, dir string) (Output, error) {
@@ -128,27 +130,56 @@ func claudeEnv(ctx context.Context, req steps.Request) (map[string]string, error
 	case "login":
 		return nil, nil
 	case "apiKey":
+		if req.Step.Connection != "" {
+			value, err := resolveConnectionAPIKey(ctx, req, req.Step.Connection)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{anthropicAPIKeyEnv: value}, nil
+		}
 		if req.Secrets == nil {
 			return nil, fmt.Errorf("claude API key auth requires profiles.claude env ANTHROPIC_API_KEY in secrets.yaml")
 		}
-		value, err := req.Secrets.ResolveProfileEnv(ctx, "claude", "ANTHROPIC_API_KEY")
+		value, err := req.Secrets.ResolveProfileEnv(ctx, "claude", anthropicAPIKeyEnv)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]string{"ANTHROPIC_API_KEY": value}, nil
+		return map[string]string{anthropicAPIKeyEnv: value}, nil
 	case "auto":
+		if req.Step.Connection != "" {
+			value, err := resolveConnectionAPIKey(ctx, req, req.Step.Connection)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]string{anthropicAPIKeyEnv: value}, nil
+		}
 		if req.Secrets == nil {
 			return nil, nil
 		}
-		if inspector, ok := req.Secrets.(secrets.ProfileInspector); ok && !inspector.ProfileEnvConfigured("claude", "ANTHROPIC_API_KEY") {
+		if inspector, ok := req.Secrets.(secrets.ProfileInspector); ok && !inspector.ProfileEnvConfigured("claude", anthropicAPIKeyEnv) {
 			return nil, nil
 		}
-		value, err := req.Secrets.ResolveProfileEnv(ctx, "claude", "ANTHROPIC_API_KEY")
+		value, err := req.Secrets.ResolveProfileEnv(ctx, "claude", anthropicAPIKeyEnv)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]string{"ANTHROPIC_API_KEY": value}, nil
+		return map[string]string{anthropicAPIKeyEnv: value}, nil
 	default:
 		return nil, fmt.Errorf("claude auth %q is unsupported", auth)
 	}
+}
+
+func resolveConnectionAPIKey(ctx context.Context, req steps.Request, connection string) (string, error) {
+	if req.Secrets == nil {
+		return "", fmt.Errorf("claude connection %q requires a secrets resolver that can resolve %s", connection, anthropicAPIKeyEnv)
+	}
+	resolver, ok := req.Secrets.(secrets.ConnectionEnvResolver)
+	if !ok {
+		return "", fmt.Errorf("claude connection %q requires a connection env resolver for %s", connection, anthropicAPIKeyEnv)
+	}
+	value, err := resolver.ResolveConnectionEnv(ctx, connection, anthropicAPIKeyEnv)
+	if err != nil {
+		return "", fmt.Errorf("claude connection %q cannot resolve %s: %w", connection, anthropicAPIKeyEnv, err)
+	}
+	return value, nil
 }

@@ -103,21 +103,39 @@ func WriteInitial(paths Paths) error {
   #   type: github_pr
   #   enabled: false
   #   config:
-  #     tokenSecret: github-token
+  #     connection: github.work
   #     query: "is:pr is:open assignee:@me"
   #     every: 5m
   #     pageSize: 50
+  #
+  #     # Compatibility: tokenSecret is still accepted for existing configs.
+  #     # tokenSecret: github-token
 `)
 	if err := writeIfMissing(paths.SourcesFile, sourcesYAML, 0o644); err != nil {
 		return err
 	}
-	secretsYAML := []byte(`# Configure credential profiles once, then built-in steps can use them.
+	secretsYAML := []byte(`# Configure connections once, then sources and workflow steps can reference them.
+# connections:
+#   claude:
+#     default:
+#       provider: env
+#       env:
+#         ANTHROPIC_API_KEY:
+#           secret: anthropic-api-key
+#   github:
+#     work:
+#       provider: static_token
+#       tokenSecret: github-work-token
+#
+# Raw secrets are still used for local storage behind connections:
 # secrets:
 #   anthropic-api-key:
 #     file: secrets/anthropic-api-key
-#   github-token:
-#     file: secrets/github-token
+#   github-work-token:
+#     file: secrets/github-work-token
 #
+# Legacy profiles.claude remains
+# accepted for Claude API-key auth in existing configs:
 # profiles:
 #   claude:
 #     env:

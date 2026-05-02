@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,13 +24,15 @@ type ProfileInspector interface {
 type Service struct{}
 
 type FileResolver struct {
-	configDir string
-	config    fileConfig
+	configDir       string
+	config          fileConfig
+	githubRefreshMu sync.Mutex
 }
 
 type fileConfig struct {
-	Secrets  map[string]secretEntry  `yaml:"secrets"`
-	Profiles map[string]profileEntry `yaml:"profiles"`
+	Secrets     map[string]secretEntry                `yaml:"secrets"`
+	Profiles    map[string]profileEntry               `yaml:"profiles"`
+	Connections map[string]map[string]connectionEntry `yaml:"connections"`
 }
 
 type secretEntry struct {

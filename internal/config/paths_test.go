@@ -145,4 +145,38 @@ func TestWriteInitialCreatesConfigSamplesAndToken(t *testing.T) {
 			t.Fatalf("expected %s to exist: %v", path, err)
 		}
 	}
+
+	sourcesData, err := os.ReadFile(paths.SourcesFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sourcesData), "connection: github.work") {
+		t.Fatalf("sources sample should prefer connection: github.work:\n%s", sourcesData)
+	}
+
+	secretsData, err := os.ReadFile(paths.SecretsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretsSample := string(secretsData)
+	for _, want := range []string{
+		"connections:",
+		"claude:",
+		"provider: env",
+		"ANTHROPIC_API_KEY:",
+		"Legacy profiles.claude",
+	} {
+		if !strings.Contains(string(secretsData), want) {
+			t.Fatalf("secrets sample missing %q:\n%s", want, secretsData)
+		}
+	}
+	connectionsIndex := strings.Index(secretsSample, "# connections:")
+	secretsIndex := strings.Index(secretsSample, "# secrets:")
+	profilesIndex := strings.Index(secretsSample, "# profiles:")
+	if connectionsIndex == -1 || secretsIndex == -1 || profilesIndex == -1 {
+		t.Fatalf("secrets sample should include connections, secrets, and profiles sections:\n%s", secretsData)
+	}
+	if !(connectionsIndex < secretsIndex && connectionsIndex < profilesIndex) {
+		t.Fatalf("secrets sample should present connections before secrets and profiles:\n%s", secretsData)
+	}
 }

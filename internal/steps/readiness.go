@@ -27,6 +27,8 @@ type ReadinessOptions struct {
 	LookPath func(string) (string, error)
 }
 
+const anthropicAPIKeyEnv = "ANTHROPIC_API_KEY"
+
 func CheckReadiness(ctx context.Context, wf workflows.Workflow, opts ReadinessOptions) []Diagnostic {
 	lookPath := opts.LookPath
 	if lookPath == nil {
@@ -53,24 +55,36 @@ func CheckReadiness(ctx context.Context, wf workflows.Workflow, opts ReadinessOp
 		}
 		switch auth {
 		case "apiKey":
+			if step.Connection != "" {
+				if err := checkClaudeConnectionEnv(ctx, opts.Secrets, step.Connection); err != nil {
+					diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticError, StepID: step.ID, Message: err.Error()})
+				}
+				continue
+			}
 			if opts.Secrets == nil {
 				diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticError, StepID: step.ID, Message: "Claude API key auth requires profiles.claude env ANTHROPIC_API_KEY in secrets.yaml"})
 				continue
 			}
-			if _, err := opts.Secrets.ResolveProfileEnv(ctx, "claude", "ANTHROPIC_API_KEY"); err != nil {
+			if _, err := opts.Secrets.ResolveProfileEnv(ctx, "claude", anthropicAPIKeyEnv); err != nil {
 				diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticError, StepID: step.ID, Message: fmt.Sprintf("Claude API key auth is not ready: %v", err)})
 			}
 		case "auto":
+			if step.Connection != "" {
+				if err := checkClaudeConnectionEnv(ctx, opts.Secrets, step.Connection); err != nil {
+					diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticError, StepID: step.ID, Message: err.Error()})
+				}
+				continue
+			}
 			if opts.Secrets == nil {
 				diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticWarning, StepID: step.ID, Message: "Claude API key profile is not configured; Runloop will rely on Claude CLI login state under HOME"})
 				continue
 			}
 			inspector, ok := opts.Secrets.(secrets.ProfileInspector)
-			if ok && !inspector.ProfileEnvConfigured("claude", "ANTHROPIC_API_KEY") {
+			if ok && !inspector.ProfileEnvConfigured("claude", anthropicAPIKeyEnv) {
 				diagnostics = append(diagnostics, Diagnostic{Level: DiagnosticWarning, StepID: step.ID, Message: "Claude API key profile is not configured; Runloop will rely on Claude CLI login state under HOME"})
 				continue
 			}
-			if _, err := opts.Secrets.ResolveProfileEnv(ctx, "claude", "ANTHROPIC_API_KEY"); err != nil {
+			if _, err := opts.Secrets.ResolveProfileEnv(ctx, "claude", anthropicAPIKeyEnv); err != nil {
 				level := DiagnosticWarning
 				if ok {
 					level = DiagnosticError
@@ -83,4 +97,18 @@ func CheckReadiness(ctx context.Context, wf workflows.Workflow, opts ReadinessOp
 		}
 	}
 	return diagnostics
+}
+
+func checkClaudeConnectionEnv(ctx context.Context, resolver secrets.Resolver, connection string) error {
+	if resolver == nil {
+		return fmt.Errorf("Claude connection %q requires a secrets resolver that can resolve %s", connection, anthropicAPIKeyEnv)
+	}
+	connectionResolver, ok := resolver.(secrets.ConnectionEnvResolver)
+	if !ok {
+		return fmt.Errorf("Claude connection %q requires a connection env resolver for %s", connection, anthropicAPIKeyEnv)
+	}
+	if _, err := connectionResolver.ResolveConnectionEnv(ctx, connection, anthropicAPIKeyEnv); err != nil {
+		return fmt.Errorf("Claude connection %q cannot resolve %s: %w", connection, anthropicAPIKeyEnv, err)
+	}
+	return nil
 }

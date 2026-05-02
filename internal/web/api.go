@@ -1,17 +1,20 @@
 package web
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"runloop/internal/dispatch"
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
+	"runloop/internal/secrets"
 	"runloop/internal/sources"
 	"runloop/internal/sources/manual"
 	"runloop/internal/steps"
@@ -20,12 +23,19 @@ import (
 )
 
 type API struct {
-	store     *store.Store
-	inbox     *inbox.Service
-	evaluator *triggers.Evaluator
-	engine    *runs.Engine
-	sources   *sources.Manager
-	readiness steps.ReadinessOptions
+	store       *store.Store
+	inbox       *inbox.Service
+	evaluator   *triggers.Evaluator
+	engine      *runs.Engine
+	sources     *sources.Manager
+	readiness   steps.ReadinessOptions
+	connections connectionInspector
+}
+
+type connectionInspector interface {
+	ConnectionConfigured(ref string) bool
+	ListConnections() []secrets.Connection
+	TestConnection(ctx context.Context, ref string) error
 }
 
 func (a *API) Routes(r chi.Router) {
@@ -44,6 +54,8 @@ func (a *API) Routes(r chi.Router) {
 	r.Post("/api/runs/{id}/cancel", a.cancelRun)
 	r.Get("/api/sources", a.listSources)
 	r.Post("/api/sources/{id}/test", a.testSource)
+	r.Get("/api/connections", a.listConnections)
+	r.Post("/api/connections/{ref}/test", a.testConnection)
 }
 
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +257,58 @@ func (a *API) testSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeResult(w, map[string]any{"ok": true}, source.Test(r.Context()))
+}
+
+func (a *API) listConnections(w http.ResponseWriter, r *http.Request) {
+	type connectionInfo struct {
+		Service  string `json:"service"`
+		Name     string `json:"name"`
+		Ref      string `json:"ref"`
+		Provider string `json:"provider"`
+	}
+	out := []connectionInfo{}
+	if a.connections != nil {
+		for _, conn := range a.connections.ListConnections() {
+			out = append(out, connectionInfo{
+				Service:  conn.Service,
+				Name:     conn.Name,
+				Ref:      conn.Service + "." + conn.Name,
+				Provider: conn.Provider,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) testConnection(w http.ResponseWriter, r *http.Request) {
+	ref := chi.URLParam(r, "ref")
+	if !validConnectionRef(ref) {
+		http.Error(w, "connection ref must be service.name", http.StatusBadRequest)
+		return
+	}
+	if a.connections == nil {
+		http.Error(w, "connection resolver is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if !a.connections.ConnectionConfigured(ref) {
+		http.Error(w, "connection "+strconv.Quote(ref)+" not found", http.StatusNotFound)
+		return
+	}
+	err := a.connections.TestConnection(r.Context(), ref)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "connection "+strconv.Quote(ref)+" not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "connection "+strconv.Quote(ref)+" test failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func validConnectionRef(ref string) bool {
+	service, name, ok := strings.Cut(ref, ".")
+	return ok && service != "" && name != "" && !strings.Contains(name, ".")
 }
 
 func parseID(r *http.Request) (int64, error) {

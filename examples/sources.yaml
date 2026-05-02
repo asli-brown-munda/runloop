@@ -6,7 +6,10 @@ sources:
   #   type: github_pr
   #   enabled: false
   #   config:
-  #     tokenSecret: github-token
+  #     connection: github.work
   #     query: "is:pr is:open assignee:@me"
   #     every: 5m
   #     pageSize: 50
+  #
+  #     # Compatibility: tokenSecret remains accepted for existing configs.
+  #     # tokenSecret: github-token

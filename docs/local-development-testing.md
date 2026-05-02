@@ -42,6 +42,7 @@ Terminal 2, using the same `tmp` value:
 
 ```sh
 HOME="$tmp" ./bin/runloop health
+HOME="$tmp" ./bin/runloop connections list
 HOME="$tmp" ./bin/runloop workflows list
 HOME="$tmp" ./bin/runloop sources list
 HOME="$tmp" ./bin/runloop runs list
@@ -50,12 +51,80 @@ HOME="$tmp" ./bin/runloop runs list
 Expected result:
 
 - `health` returns `{"ok": true}`.
+- `connections list` succeeds, even when no uncommented connections are configured.
 - `workflows list` includes `manual-hello`.
 - `sources list` includes `manual`.
 - `runs list` succeeds, even when empty.
 - `runloop init` created `config.yaml`, `sources.yaml`, `secrets.yaml`, `auth.token`, the workflow directory, the secrets directory, state directories, the log directory, and the artifact directory under the temporary `HOME`.
 
 Stop the daemon with `Ctrl-C` when finished.
+
+## Connections Smoke Test
+
+Use static-token connections for local validation so automated checks do not require real GitHub credentials. Stop any previous daemon using this temporary `HOME` before editing `secrets.yaml`; the secrets resolver is initialized when the daemon starts.
+
+```sh
+mkdir -p "$tmp/.config/runloop/secrets"
+printf "test-github-token\n" > "$tmp/.config/runloop/secrets/github-work-token"
+printf "test-anthropic-key\n" > "$tmp/.config/runloop/secrets/anthropic-api-key"
+chmod 600 "$tmp/.config/runloop/secrets/github-work-token" "$tmp/.config/runloop/secrets/anthropic-api-key"
+cat > "$tmp/.config/runloop/secrets.yaml" <<'EOF'
+secrets:
+  github-work-token:
+    file: secrets/github-work-token
+  anthropic-api-key:
+    file: secrets/anthropic-api-key
+
+connections:
+  github:
+    work:
+      provider: static_token
+      tokenSecret: github-work-token
+  claude:
+    default:
+      provider: env
+      env:
+        ANTHROPIC_API_KEY:
+          secret: anthropic-api-key
+EOF
+HOME="$tmp" ./bin/runloopd
+```
+
+In another terminal:
+
+```sh
+HOME="$tmp" ./bin/runloop connections list
+HOME="$tmp" ./bin/runloop connections test github.work
+HOME="$tmp" ./bin/runloop connections test claude.default
+```
+
+Expected result:
+
+- `connections list` includes `github.work` with provider `static_token` and `claude.default` with provider `env`.
+- `connections test github.work` validates local secret resolution only; it does not call GitHub.
+- `connections test claude.default` validates that `ANTHROPIC_API_KEY` resolves from the configured secret.
+
+Optional remote GitHub source test: configure a real GitHub token or a `github_user_device` connection, add a `github_pr` source that references `connection: github.work`, then restart the daemon.
+
+```yaml
+sources:
+  - id: github-work-prs
+    type: github_pr
+    enabled: true
+    config:
+      connection: github.work
+      query: "is:pr is:open assignee:@me"
+      every: 5m
+      pageSize: 50
+```
+
+Then run:
+
+```sh
+HOME="$tmp" ./bin/runloop sources test github-work-prs
+```
+
+Expected result: the source test calls GitHub and requires valid credentials. Do not make this part of automated tests.
 
 ## Config And Runtime Path Override Smoke Test
 
@@ -152,9 +221,9 @@ Expected result:
 - `enable manual-hello` sets `enabled` to `true`.
 - Enable and disable operations update `workflow_definitions.enabled` without creating new workflow versions.
 
-## Step Environment, Secrets, And Claude Readiness Smoke Test
+## Step Environment, Connections, Secrets, And Claude Readiness Smoke Test
 
-Use a temporary workflow to verify shell environment isolation, file-backed secrets, credential profiles, the per-run workspace, and Claude readiness diagnostics. Stop any previous daemon using this temporary `HOME` before this section; the secrets resolver is initialized when the daemon starts.
+Use a temporary workflow to verify shell environment isolation, file-backed secrets, connections, legacy credential profiles, the per-run workspace, and Claude readiness diagnostics. Stop any previous daemon using this temporary `HOME` before this section; the secrets resolver is initialized when the daemon starts.
 
 Before starting the daemon, configure a local test secret and profile:
 
@@ -176,6 +245,14 @@ profiles:
     env:
       ANTHROPIC_API_KEY:
         secret: profile-token
+
+connections:
+  claude:
+    default:
+      provider: env
+      env:
+        ANTHROPIC_API_KEY:
+          secret: profile-token
 EOF
 ```
 
@@ -250,6 +327,7 @@ steps:
   - id: agent
     type: claude
     auth: auto
+    connection: claude.default
     prompt: "Summarize {{ inbox.normalized.message }}"
 ```
 
@@ -264,9 +342,10 @@ Expected result:
 - The workflow loads as normal because static validation stays portable.
 - The `readiness` field reports local machine diagnostics.
 - If `claude` is not on `PATH`, readiness includes an error.
-- If `claude` is on `PATH` and `profiles.claude` resolves `ANTHROPIC_API_KEY`, `auth: auto` is ready to use API-key auth.
-- If `claude` is on `PATH` but no `profiles.claude` API-key profile exists, `auth: auto` reports a warning and will rely on Claude CLI login state under `HOME`.
-- If the workflow uses `auth: apiKey`, a missing or broken `profiles.claude` entry is a readiness error.
+- If `claude` is on `PATH` and `connection: claude.default` resolves `ANTHROPIC_API_KEY`, `auth: auto` is ready to use API-key auth.
+- If `claude` is on `PATH` and no connection is set, `auth: auto` can still use legacy `profiles.claude` when it resolves `ANTHROPIC_API_KEY`.
+- If `claude` is on `PATH` but no connection or legacy profile exists, `auth: auto` reports a warning and will rely on Claude CLI login state under `HOME`.
+- If the workflow uses `auth: apiKey`, a missing or broken API-key connection/profile is a readiness error.
 
 ## Workflow Reload Smoke Test
 
@@ -419,7 +498,7 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - Filesystem source ignores non-matching glob entries.
 - Schedule source accepts exactly one of `every` or `cron`.
 - Schedule source establishes a baseline before emitting later ticks.
-- GitHub PR source resolves its token from `secrets.yaml`, expands `@me`, and emits `github_pr_unresolved_review_threads` only for PRs with unresolved review threads.
+- GitHub PR source resolves its token from `connection: github.work` in `secrets.yaml`, expands `@me`, and emits `github_pr_unresolved_review_threads` only for PRs with unresolved review threads. Legacy `tokenSecret` remains accepted for existing source configs.
 - Source cursors round trip through `source_cursors` and advance after successful sync.
 
 ### Trigger Evaluation And Dispatch
@@ -440,7 +519,7 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - Step env entries resolve literal values, direct `{ secret: <id> }` values, and credential profile `{ from: <profile.ENV_NAME> }` values.
 - File-backed secrets reject absolute paths, paths escaping the config directory, and group- or world-readable secret files.
 - Shell and Claude steps default to the per-run `{{ runloop.workspace }}` directory when `workdir` is unset; `git_checkout` defaults to `{{ runloop.workspace }}/repo`.
-- Claude steps support `auth: login`, `auth: apiKey`, and `auth: auto`; API-key auth resolves `profiles.claude` `ANTHROPIC_API_KEY`.
+- Claude steps support `auth: login`, `auth: apiKey`, and `auth: auto`; API-key auth prefers `connection: claude.default` and still accepts legacy `profiles.claude` `ANTHROPIC_API_KEY`.
 - Claude and git checkout readiness diagnostics distinguish static workflow validity from local machine readiness.
 - Wait steps honor configured duration behavior.
 - Failed steps mark the run and dispatch failed.
@@ -470,4 +549,4 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 - If filesystem changes are not detected, confirm the source directory exists before the daemon starts and that the changed file matches the configured glob.
 - If no workflow dispatch is created, confirm the workflow is enabled and the trigger source/entity type matches the inbox item.
 - If workflow edits do not reload, confirm the file extension is `.yaml` or `.yml` and check daemon logs for validation errors.
-- If a secret or credential profile does not resolve, confirm `secrets.yaml` points to a relative path under the Runloop config directory and that the target file mode is `0600`.
+- If a secret, connection, or legacy credential profile does not resolve, confirm `secrets.yaml` points to a relative path under the Runloop config directory and that the target file mode is `0600`.

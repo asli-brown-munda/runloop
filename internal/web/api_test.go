@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"runloop/internal/artifacts"
 	"runloop/internal/inbox"
 	"runloop/internal/runs"
+	"runloop/internal/secrets"
 	"runloop/internal/sources"
 	"runloop/internal/sources/manual"
 	"runloop/internal/steps"
@@ -49,6 +52,185 @@ func testWorkflowAPI(t *testing.T) (*store.Store, http.Handler) {
 	r := chi.NewRouter()
 	api.Routes(r)
 	return st, r
+}
+
+type fakeConnectionInspector struct {
+	connections []secrets.Connection
+	testErr     error
+}
+
+func (f fakeConnectionInspector) ListConnections() []secrets.Connection {
+	return f.connections
+}
+
+func (f fakeConnectionInspector) TestConnection(ctx context.Context, ref string) error {
+	if f.testErr != nil {
+		return f.testErr
+	}
+	for _, conn := range f.connections {
+		if conn.Service+"."+conn.Name == ref {
+			return nil
+		}
+	}
+	return sql.ErrNoRows
+}
+
+func (f fakeConnectionInspector) ConnectionConfigured(ref string) bool {
+	for _, conn := range f.connections {
+		if conn.Service+"."+conn.Name == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func testConnectionsAPI(t *testing.T, inspector fakeConnectionInspector) http.Handler {
+	t.Helper()
+	api := &API{connections: inspector}
+	r := chi.NewRouter()
+	api.Routes(r)
+	return r
+}
+
+func TestConnectionsAPIList(t *testing.T) {
+	handler := testConnectionsAPI(t, fakeConnectionInspector{connections: []secrets.Connection{
+		{Service: "github", Name: "work", Provider: "static_token"},
+	}})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/connections", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("list status=%d body=%s", res.Code, res.Body.String())
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	want := []map[string]any{{
+		"service":  "github",
+		"name":     "work",
+		"ref":      "github.work",
+		"provider": "static_token",
+	}}
+	if len(out) != len(want) {
+		t.Fatalf("unexpected connection count: %#v", out)
+	}
+	for key, value := range want[0] {
+		if out[0][key] != value {
+			t.Fatalf("connection[%q] = %#v, want %#v in %#v", key, out[0][key], value, out[0])
+		}
+	}
+	for _, forbidden := range []string{"token", "tokenSecret", "secret", "secretID", "refreshToken", "path", "file"} {
+		if _, ok := out[0][forbidden]; ok {
+			t.Fatalf("connection response exposed %q: %#v", forbidden, out[0])
+		}
+	}
+}
+
+func TestConnectionsAPITestOK(t *testing.T) {
+	handler := testConnectionsAPI(t, fakeConnectionInspector{connections: []secrets.Connection{
+		{Service: "github", Name: "work", Provider: "static_token"},
+	}})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/connections/github.work/test", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("test status=%d body=%s", res.Code, res.Body.String())
+	}
+	var out map[string]bool
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out["ok"] {
+		t.Fatalf("expected ok response, got %#v", out)
+	}
+}
+
+func TestConnectionsAPITestMissing(t *testing.T) {
+	handler := testConnectionsAPI(t, fakeConnectionInspector{connections: []secrets.Connection{
+		{Service: "github", Name: "work", Provider: "static_token"},
+	}})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/connections/github.missing/test", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code < 400 || res.Code >= 500 {
+		t.Fatalf("expected client error, status=%d body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "not found") && !strings.Contains(res.Body.String(), "not configured") {
+		t.Fatalf("missing connection response is not helpful: %s", res.Body.String())
+	}
+}
+
+func TestConnectionsAPITestInvalidRef(t *testing.T) {
+	handler := testConnectionsAPI(t, fakeConnectionInspector{connections: []secrets.Connection{
+		{Service: "github", Name: "work", Provider: "static_token"},
+	}})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/connections/github/test", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad request, status=%d body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "service.name") {
+		t.Fatalf("invalid ref response is not helpful: %s", res.Body.String())
+	}
+}
+
+func TestConnectionsAPITestFailureIsSanitized(t *testing.T) {
+	handler := testConnectionsAPI(t, fakeConnectionInspector{
+		connections: []secrets.Connection{
+			{Service: "github", Name: "work", Provider: "static_token"},
+		},
+		testErr: errors.New(`secret "gh-token" from /tmp/runloop-secrets.yaml could not be read`),
+	})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/connections/github.work/test", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code < 400 {
+		t.Fatalf("expected non-2xx, status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, `connection "github.work" test failed`) {
+		t.Fatalf("sanitized failure response is not helpful: %s", body)
+	}
+	for _, leaked := range []string{"gh-token", "/tmp/runloop-secrets.yaml", "could not be read"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("failure response leaked %q: %s", leaked, body)
+		}
+	}
+}
+
+func TestConnectionsAPITestConfiguredSecretErrorIsSanitized(t *testing.T) {
+	handler := testConnectionsAPI(t, fakeConnectionInspector{
+		connections: []secrets.Connection{
+			{Service: "github", Name: "work", Provider: "static_token"},
+		},
+		testErr: errors.New(`connection "github.work" token: secret "gh-token" is not configured`),
+	})
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/connections/github.work/test", nil)
+	handler.ServeHTTP(res, req)
+	if res.Code == http.StatusNotFound {
+		t.Fatalf("configured broken connection returned not found: %s", res.Body.String())
+	}
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected server error, status=%d body=%s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, `connection "github.work" test failed`) {
+		t.Fatalf("sanitized failure response is not helpful: %s", body)
+	}
+	for _, leaked := range []string{"gh-token", "token:", "secret", "not configured"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("failure response leaked %q: %s", leaked, body)
+		}
+	}
 }
 
 func TestWorkflowShowEndpointIncludesReadinessDiagnostics(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"runloop/internal/secrets"
 	"runloop/internal/sources"
 )
 
@@ -32,15 +33,17 @@ func init() {
 }
 
 type Source struct {
-	id          string
-	tokenSecret string
-	query       string
-	every       time.Duration
-	pageSize    int
-	graphQLURL  string
-	secrets     tokenResolver
-	client      *http.Client
-	now         func() time.Time
+	id                string
+	tokenSecret       string
+	connection        string
+	query             string
+	every             time.Duration
+	pageSize          int
+	graphQLURL        string
+	secrets           tokenResolver
+	connectionSecrets secrets.TokenConnectionResolver
+	client            *http.Client
+	now               func() time.Time
 }
 
 type tokenResolver interface {
@@ -49,11 +52,23 @@ type tokenResolver interface {
 
 func New(id string, cfg map[string]any, opts sources.BuildOptions) (*Source, error) {
 	tokenSecret, _ := cfg["tokenSecret"].(string)
-	if tokenSecret == "" {
-		return nil, fmt.Errorf("github_pr source %q requires config.tokenSecret", id)
+	connection, _ := cfg["connection"].(string)
+	if tokenSecret == "" && connection == "" {
+		return nil, fmt.Errorf("github_pr source %q requires config.connection or config.tokenSecret", id)
+	}
+	if tokenSecret != "" && connection != "" {
+		return nil, fmt.Errorf("github_pr source %q sets both config.connection and config.tokenSecret", id)
 	}
 	if opts.Secrets == nil {
 		return nil, fmt.Errorf("github_pr source %q requires a secrets resolver", id)
+	}
+	var connectionSecrets secrets.TokenConnectionResolver
+	if connection != "" {
+		var ok bool
+		connectionSecrets, ok = opts.Secrets.(secrets.TokenConnectionResolver)
+		if !ok {
+			return nil, fmt.Errorf("github_pr source %q connection %q requires secrets.TokenConnectionResolver", id, connection)
+		}
 	}
 	query, _ := cfg["query"].(string)
 	if query == "" {
@@ -83,15 +98,17 @@ func New(id string, cfg map[string]any, opts sources.BuildOptions) (*Source, err
 		client = http.DefaultClient
 	}
 	return &Source{
-		id:          id,
-		tokenSecret: tokenSecret,
-		query:       query,
-		every:       every,
-		pageSize:    pageSize,
-		graphQLURL:  graphQLURL,
-		secrets:     opts.Secrets,
-		client:      client,
-		now:         time.Now,
+		id:                id,
+		tokenSecret:       tokenSecret,
+		connection:        connection,
+		query:             query,
+		every:             every,
+		pageSize:          pageSize,
+		graphQLURL:        graphQLURL,
+		secrets:           opts.Secrets,
+		connectionSecrets: connectionSecrets,
+		client:            client,
+		now:               time.Now,
 	}, nil
 }
 
@@ -146,6 +163,16 @@ func (s *Source) Sync(ctx context.Context, cursor sources.Cursor) ([]sources.Inb
 }
 
 func (s *Source) token(ctx context.Context) (string, error) {
+	if s.connection != "" {
+		token, err := s.connectionSecrets.ResolveConnectionToken(ctx, s.connection)
+		if err != nil {
+			return "", fmt.Errorf("github_pr source %q connection %q token: %w", s.id, s.connection, err)
+		}
+		if token == "" {
+			return "", fmt.Errorf("github_pr source %q connection %q resolved empty token", s.id, s.connection)
+		}
+		return token, nil
+	}
 	token, err := s.secrets.Resolve(ctx, s.tokenSecret)
 	if err != nil {
 		return "", fmt.Errorf("github_pr source %q token: %w", s.id, err)

@@ -24,6 +24,8 @@ steps:
   - id: agent
     type: claude
     timeout: 30m
+    auth: auto
+    connection: claude.default
     workdir: "{{ steps.checkout.path }}"
     permissionMode: acceptEdits
     prompt: |

@@ -41,6 +41,7 @@ type Step struct {
 	Model          string              `yaml:"model" json:"model"`
 	PermissionMode string              `yaml:"permissionMode" json:"permissionMode"`
 	Auth           string              `yaml:"auth" json:"auth"`
+	Connection     string              `yaml:"connection" json:"connection"`
 	Args           []string            `yaml:"args" json:"args"`
 	Retry          RetryPolicy         `yaml:"retry" json:"retry"`
 }

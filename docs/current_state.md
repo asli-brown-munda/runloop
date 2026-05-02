@@ -8,7 +8,7 @@ configured source -> inbox item -> trigger evaluation -> dispatch -> workflow ru
 shell/claude step -> isolated env + per-run workspace + step artifacts
 ```
 
-The setup is intentionally small. It establishes the daemon, CLI, config paths and overrides, SQLite schema, workflow loading, workflow inspection and enablement controls, source loading, source change detection, trigger matching, dispatch processing, step execution, file-backed secrets, credential profiles, and artifact writing.
+The setup is intentionally small. It establishes the daemon, CLI, config paths and overrides, SQLite schema, workflow loading, workflow inspection and enablement controls, source loading, source change detection, trigger matching, dispatch processing, step execution, file-backed secrets, connections, legacy credential profiles, and artifact writing.
 
 ## Binaries
 
@@ -317,13 +317,13 @@ sources:
     type: github_pr
     enabled: true
     config:
-      tokenSecret: github-token
+      connection: github.work
       query: "is:pr is:open assignee:@me"
       every: 5m
       pageSize: 50
 ```
 
-The GitHub source uses the GraphQL API, resolves `tokenSecret` through `secrets.yaml`, expands `@me` to the authenticated viewer login, and emits one inbox candidate per PR. PRs with unresolved review threads use entity type `github_pr_unresolved_review_threads`; PRs without unresolved threads use `github_pr_review_clean`, allowing workflows to trigger only on actionable review feedback.
+The GitHub source uses the GraphQL API, resolves `connection` through `secrets.yaml`, expands `@me` to the authenticated viewer login, and emits one inbox candidate per PR. `github.work` can use the implemented `static_token` provider for local validation or the implemented `github_user_device` provider for refreshable GitHub user-device credentials. Legacy `tokenSecret` remains accepted for existing configs, but new configs should prefer `connection`. PRs with unresolved review threads use entity type `github_pr_unresolved_review_threads`; PRs without unresolved threads use `github_pr_review_clean`, allowing workflows to trigger only on actionable review feedback.
 
 The source runner is in:
 
@@ -452,7 +452,7 @@ internal/steps/gitcheckout
 
 Each handler receives a `steps.Request` carrying the parsed step, the owning workflow, the rendered input, the templating context, minimal environment defaults, and the configured secret resolver. Handlers own their own policy: the shell and Claude handlers enforce `permissions.shell` themselves rather than the dispatcher gating them.
 
-Shell-like steps do not inherit the daemon's full environment. They receive `PATH`, `HOME`, `USER`, and `TERM` when present, plus explicit `step.env` entries. Env entries can be literals, direct secret references, or credential profile references from `~/.config/runloop/secrets.yaml`.
+Shell-like steps do not inherit the daemon's full environment. They receive `PATH`, `HOME`, `USER`, and `TERM` when present, plus explicit `step.env` entries. Env entries can be literals, direct secret references, or legacy credential profile references from `~/.config/runloop/secrets.yaml`.
 
 The run engine creates a per-run workspace under:
 
@@ -468,42 +468,54 @@ That path is available to templates as:
 
 Shell and Claude steps default to that workspace when `workdir` is unset. The `git_checkout` step checks out a PR head into that workspace, verifies the expected head SHA when provided, and returns the checkout path for later steps as `{{ steps.<id>.path }}`.
 
-File-backed secrets and credential profiles are implemented in:
+Connections, file-backed secrets, and legacy credential profiles are implemented in:
 
 ```text
 internal/secrets/service.go
 ```
 
-Secrets are configured in:
+Connections and their backing storage are configured in:
 
 ```text
 ~/.config/runloop/secrets.yaml
 ```
 
-Current secrets behavior:
+Current connections and secrets behavior:
 
+- connections are the preferred credential model for built-in integrations
+- `static_token` connections resolve token-style credentials from a secret ID
+- `env` connections resolve one or more environment variables from secret IDs
+- `github_user_device` connections resolve GitHub user-device credentials from the configured token file
 - secret IDs map to files relative to the Runloop config directory
 - absolute paths and paths escaping the config directory are rejected
 - secret files must not be group- or world-readable
 - secret values are trimmed of trailing newlines on read
 - `step.env` can use literal values, `{ secret: <id> }`, or `{ from: <profile.ENV_NAME> }`
-- credential profiles map environment variable names to secret IDs
+- legacy credential profiles map environment variable names to secret IDs and remain accepted for compatibility
 
 Example:
 
 ```yaml
+connections:
+  claude:
+    default:
+      provider: env
+      env:
+        ANTHROPIC_API_KEY:
+          secret: anthropic-api-key
+  github:
+    work:
+      provider: static_token
+      tokenSecret: github-work-token
+
 secrets:
   anthropic-api-key:
     file: secrets/anthropic-api-key
-
-profiles:
-  claude:
-    env:
-      ANTHROPIC_API_KEY:
-        secret: anthropic-api-key
+  github-work-token:
+    file: secrets/github-work-token
 ```
 
-The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports `auth: login`, `auth: apiKey`, and `auth: auto`. Login auth relies on Claude CLI state under `HOME`; API-key auth injects `ANTHROPIC_API_KEY` from `profiles.claude`; auto auth uses the profile when configured and otherwise falls back to CLI login state. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary, missing `git` binary for `git_checkout`, or missing required API-key profile.
+The Claude step runs the local Claude CLI through `internal/steps/claude`. It supports `auth: login`, `auth: apiKey`, and `auth: auto`. Login auth relies on Claude CLI state under `HOME`; API-key auth injects `ANTHROPIC_API_KEY` from `connection: claude.default` when configured. Without a step connection, `profiles.claude` remains accepted for existing configs. Auto auth uses a configured connection first, then a legacy profile when configured, and otherwise falls back to CLI login state. `runloop workflows show <id>` includes readiness diagnostics for local machine issues such as a missing Claude binary, missing `git` binary for `git_checkout`, or missing required API-key connection/profile.
 
 The daemon also wires the step registry into workflow validation:
 
@@ -570,6 +582,20 @@ Current source CLI commands:
 ```sh
 runloop sources list
 runloop sources test <id>
+```
+
+Current connection API routes:
+
+```text
+GET  /api/connections
+POST /api/connections/{service.name}/test
+```
+
+Current connection CLI commands:
+
+```sh
+runloop connections list
+runloop connections test <service.name>
 ```
 
 Current inbox API routes:
@@ -736,12 +762,13 @@ The current committed baseline includes:
 - Filesystem watcher support through `fsnotify`
 - XDG-style default paths and explicit daemon runtime path overrides
 - Strict config loading for known config fields, with open-ended `models` config
-- Initial `secrets.yaml` generation plus file-backed secrets and credential profiles
+- Initial `secrets.yaml` generation plus file-backed secrets, connections, and legacy credential profiles
 - Runtime workflow YAML reloads through `internal/daemon/workflowwatcher.go`
 - Workflow validation for duplicate step IDs, unsupported step and sink types, malformed step env values, and unknown trigger fields with line context
 - `runloop inbox archive <id>` and `runloop inbox ignore <id>` CLI subcommands
 - Enriched `GET /api/inbox/{id}` response (item + latest version payload + dispatches/runs)
 - Shell and Claude step execution with a minimal inherited environment and per-run workspace
+- Connections as the preferred credential model, with legacy `tokenSecret` and `profiles.claude` compatibility
 - GitHub PR source support for unresolved review-thread workflows
 - Git checkout step support for local PR workspace preparation
 - Claude and git checkout readiness diagnostics in `runloop workflows show <id>`

@@ -45,6 +45,9 @@ In another terminal, use the CLI:
 
 ```sh
 go run ./cmd/runloop health
+go run ./cmd/runloop connections list
+# after configuring a connection in secrets.yaml:
+go run ./cmd/runloop connections test claude.default
 go run ./cmd/runloop workflows list
 go run ./cmd/runloop inbox add --external-id demo-1 --title "Demo item" --json '{"message":"hello"}'
 go run ./cmd/runloop inbox list
@@ -60,6 +63,8 @@ Runloop follows local user paths:
 - Config directory: `~/.config/runloop`
 - Main config: `~/.config/runloop/config.yaml`
 - Sources config: `~/.config/runloop/sources.yaml`
+- Secrets and connections config: `~/.config/runloop/secrets.yaml`
+- Local secret files: `~/.config/runloop/secrets/`
 - Workflow definitions: `~/.config/runloop/workflows`
 - Auth token: `~/.config/runloop/auth.token`
 - State directory: `~/.local/state/runloop`
