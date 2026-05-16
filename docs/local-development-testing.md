@@ -104,11 +104,11 @@ Expected result:
 - `connections test github.work` validates local secret resolution only; it does not call GitHub.
 - `connections test claude.default` validates that `ANTHROPIC_API_KEY` resolves from the configured secret.
 
-Optional remote GitHub source test: configure a real GitHub token or a `github_user_device` connection, add a `github_pr` source that references `connection: github.work`, then restart the daemon.
+Optional remote GitHub source test: configure a real GitHub token or a `github_user_device` connection, add a `github_pr` source that references `connection: github.work`, then restart the daemon. Use source id `github-assigned-prs` if you want the sample GitHub PR workflow to trigger from this source.
 
 ```yaml
 sources:
-  - id: github-work-prs
+  - id: github-assigned-prs
     type: github_pr
     enabled: true
     config:
@@ -121,10 +121,148 @@ sources:
 Then run:
 
 ```sh
-HOME="$tmp" ./bin/runloop sources test github-work-prs
+HOME="$tmp" ./bin/runloop sources test github-assigned-prs
 ```
 
 Expected result: the source test calls GitHub and requires valid credentials. Do not make this part of automated tests.
+
+## GitHub PR Review Thread Workflow E2E Test
+
+Use this smoke test when you need to validate the live path:
+
+```text
+GitHub unresolved PR review-thread update -> source sync -> inbox version -> workflow dispatch -> local PR checkout -> Claude step -> markdown sink
+```
+
+This test calls GitHub and Claude and should not be part of automated checks.
+
+Prerequisites:
+
+- A real GitHub token that can read the target repository, pull requests, and review threads through GraphQL.
+- A real Claude API key and `claude` available on `PATH`.
+- Local `git` access to fetch the PR repository. The sample workflow uses the repository SSH URL when GitHub provides one, so private repositories require working GitHub SSH access.
+- A test PR that matches the source query and has at least one unresolved PR review thread. General PR conversation comments are not enough; the source tracks review threads.
+
+Use a fresh isolated setup:
+
+```sh
+make build
+tmp=$(mktemp -d)
+HOME="$tmp" ./bin/runloop init
+```
+
+Write real credentials through local secret files. Set `GITHUB_TOKEN` and `ANTHROPIC_API_KEY` in your shell first; do not commit these files or copy them into the repository.
+
+```sh
+: "${GITHUB_TOKEN:?set GITHUB_TOKEN first}"
+: "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY first}"
+mkdir -p "$tmp/.config/runloop/secrets"
+printf "%s\n" "$GITHUB_TOKEN" > "$tmp/.config/runloop/secrets/github-work-token"
+printf "%s\n" "$ANTHROPIC_API_KEY" > "$tmp/.config/runloop/secrets/anthropic-api-key"
+chmod 600 "$tmp/.config/runloop/secrets/github-work-token" "$tmp/.config/runloop/secrets/anthropic-api-key"
+cat > "$tmp/.config/runloop/secrets.yaml" <<'EOF'
+secrets:
+  github-work-token:
+    file: secrets/github-work-token
+  anthropic-api-key:
+    file: secrets/anthropic-api-key
+
+connections:
+  github:
+    work:
+      provider: static_token
+      tokenSecret: github-work-token
+  claude:
+    default:
+      provider: env
+      env:
+        ANTHROPIC_API_KEY:
+          secret: anthropic-api-key
+EOF
+```
+
+Configure a GitHub source whose id matches the sample workflow trigger. Narrow the query to a repository you control while testing.
+
+```sh
+cat > "$tmp/.config/runloop/sources.yaml" <<'EOF'
+sources:
+  - id: manual
+    type: manual
+    enabled: true
+  - id: github-assigned-prs
+    type: github_pr
+    enabled: true
+    config:
+      connection: github.work
+      query: "repo:OWNER/REPO is:pr is:open assignee:@me"
+      every: 30s
+      pageSize: 10
+EOF
+```
+
+Replace `OWNER/REPO` with the test repository before starting the daemon.
+
+Copy and enable the sample workflow:
+
+```sh
+cp examples/workflows/github-pr-claude.yaml "$tmp/.config/runloop/workflows/github-pr-claude.yaml"
+sed -i 's/enabled: false/enabled: true/' "$tmp/.config/runloop/workflows/github-pr-claude.yaml"
+```
+
+Start the daemon:
+
+```sh
+HOME="$tmp" ./bin/runloopd
+```
+
+In another terminal, verify the configured connections, source, and workflow readiness:
+
+```sh
+HOME="$tmp" ./bin/runloop connections list
+HOME="$tmp" ./bin/runloop connections test github.work
+HOME="$tmp" ./bin/runloop connections test claude.default
+HOME="$tmp" ./bin/runloop sources list
+HOME="$tmp" ./bin/runloop sources test github-assigned-prs
+HOME="$tmp" ./bin/runloop workflows show github-pr-claude
+```
+
+Expected result:
+
+- `connections list` includes `github.work` and `claude.default`.
+- `connections test github.work` resolves the local token secret. It does not call GitHub.
+- `connections test claude.default` resolves `ANTHROPIC_API_KEY` from the local secret.
+- `sources list` includes `github-assigned-prs`.
+- `sources test github-assigned-prs` calls GitHub and validates the source token by loading the authenticated viewer. It does not create inbox items.
+- `workflows show github-pr-claude` reports the workflow as enabled and has no readiness errors for `git_checkout` or `claude`.
+
+The daemon performs an immediate source sync on startup and then syncs every `30s`. After a matching PR with unresolved review threads is visible to the source:
+
+```sh
+HOME="$tmp" ./bin/runloop inbox list
+HOME="$tmp" ./bin/runloop runs list
+```
+
+Expected result:
+
+- `inbox list` includes a `github-assigned-prs` item for the PR with entity type `github_pr_unresolved_review_threads`.
+- `runs list` includes a run for `github-pr-claude`.
+- A completed run writes a sink artifact under `$tmp/.local/share/runloop/artifacts/runs/run_<id>/sinks/github-pr-claude.md`.
+
+To test the PR review-thread update path, add or edit a comment in an unresolved review thread on the same PR, then wait for the next source interval. To force the sync sooner, stop and restart the daemon because sources sync once at startup.
+
+Then inspect the same inbox item and runs:
+
+```sh
+HOME="$tmp" ./bin/runloop inbox show <item-id>
+HOME="$tmp" ./bin/runloop runs list
+```
+
+Expected result:
+
+- `inbox show <item-id>` reports a newer latest inbox version for the same PR.
+- The latest normalized payload includes the current `unresolvedReviewThreadIDs`, `unresolvedReviewThreads`, and `reviewPromptMarkdown`; comment body changes appear in `unresolvedReviewThreads` and `reviewPromptMarkdown`.
+- Because `github-pr-claude` uses `policy: once_per_version`, the new inbox version creates another workflow dispatch and another run.
+- Resolving all review threads changes the PR entity type to `github_pr_review_clean`; that creates a clean inbox version but does not trigger the sample workflow, which only matches unresolved review threads.
 
 ## Config And Runtime Path Override Smoke Test
 

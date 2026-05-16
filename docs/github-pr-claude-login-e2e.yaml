@@ -1,0 +1,54 @@
+id: github-pr-claude-e2e
+name: GitHub PR Claude E2E
+enabled: true
+
+permissions:
+  shell: true
+
+triggers:
+  - type: inbox
+    source: github-assigned-prs
+    entityType: github_pr_unresolved_review_threads
+    policy: once_per_version
+
+steps:
+  - id: checkout
+    type: git_checkout
+    timeout: 2m
+    input:
+      # HTTPS is used for local smoke tests because it works for public repos
+      # without requiring non-interactive SSH host-key and key setup.
+      repoURL: "{{ inbox.normalized.repository.url }}.git"
+      pullNumber: "{{ inbox.normalized.number }}"
+      pullRef: "{{ inbox.normalized.pullRef }}"
+      headSHA: "{{ inbox.normalized.headSHA }}"
+
+  - id: agent
+    type: claude
+    timeout: 2m
+    auth: login
+    workdir: "{{ steps.checkout.path }}"
+    permissionMode: plan
+    model: sonnet
+    args:
+      - --tools
+      - ""
+      - --max-budget-usd
+      - "0.05"
+      - --no-session-persistence
+    prompt: |
+      You are validating a Runloop GitHub unresolved review-thread E2E smoke test.
+      Reply in one concise sentence including the exact token RUNLOOP_GITHUB_UNRESOLVED_E2E and this PR URL: {{ inbox.normalized.url }}.
+      Do not run tools or modify files.
+
+      {{ inbox.normalized.reviewPromptMarkdown }}
+
+sinks:
+  - type: markdown
+    path: github-pr-claude-e2e.md
+    body: |
+      # GitHub PR Claude E2E
+
+      Claude finished with exit code {{ exitCode }}.
+
+      {{ stdout }}
