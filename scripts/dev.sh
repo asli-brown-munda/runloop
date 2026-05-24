@@ -7,6 +7,7 @@ make -C "$root" build
 
 DEV_HOME="${RUNLOOP_DEV_HOME:-$root/.runloop-dev-home}"
 mkdir -p "$DEV_HOME"
+printf 'Runloop dev HOME: %s\n' "$DEV_HOME" >&2
 
 if [ ! -f "$DEV_HOME/.config/runloop/config.yaml" ]; then
   HOME="$DEV_HOME" "$root/bin/runloop" init

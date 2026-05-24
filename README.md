@@ -15,19 +15,73 @@ Inbox/source state is separate from workflow execution state. The inbox records 
 Prerequisites:
 
 - Go 1.24 or newer
-- A local shell environment
+- Git
+- A local POSIX-style shell environment
 
-Common commands:
+Build the binaries:
 
 ```sh
 go mod download
+make build
+```
+
+Start an isolated development daemon. This keeps Runloop config, state, logs, and artifacts under `.runloop-dev-home` in the repo instead of touching your normal home directory.
+
+Terminal 1:
+
+```sh
+export RUNLOOP_DEV_HOME="${RUNLOOP_DEV_HOME:-$PWD/.runloop-dev-home}"
+./scripts/dev.sh
+```
+
+Terminal 2:
+
+```sh
+export RUNLOOP_DEV_HOME="${RUNLOOP_DEV_HOME:-$PWD/.runloop-dev-home}"
+HOME="$RUNLOOP_DEV_HOME" ./bin/runloop health
+HOME="$RUNLOOP_DEV_HOME" ./bin/runloop workflows list
+HOME="$RUNLOOP_DEV_HOME" ./bin/runloop sources list
+```
+
+Run the sample workflow:
+
+```sh
+HOME="$RUNLOOP_DEV_HOME" ./bin/runloop inbox add \
+  --source manual \
+  --external-id demo-1 \
+  --title "Demo item" \
+  --json '{"message":"hello"}'
+
+HOME="$RUNLOOP_DEV_HOME" ./bin/runloop inbox list
+HOME="$RUNLOOP_DEV_HOME" ./bin/runloop runs list
+find "$RUNLOOP_DEV_HOME/.local/share/runloop/artifacts/runs" -path '*/sinks/report.md' -print
+```
+
+Expected result:
+
+- `health` returns `{"ok": true}`.
+- `workflows list` includes `manual-hello`.
+- `sources list` includes `manual`.
+- `runs list` shows a completed run after the manual inbox item is added.
+- The `find` command prints a `report.md` artifact path.
+
+Stop the daemon with `Ctrl-C`.
+
+For a step-by-step setup guide, including credentials and optional GitHub/Claude configuration, see [Setup Guide](docs/setup.md).
+
+Contributor checks:
+
+```sh
 make lint-install
+make fmt-check
 make test
 make lint
 make build
 ```
 
 `make lint` runs local static analysis with `go vet` and `golangci-lint`. The `lint-install` target installs the pinned analyzer version used by this repository.
+
+## Common CLI Commands
 
 Initialize local config and examples:
 
@@ -76,8 +130,12 @@ Runloop follows local user paths:
 
 ## Documentation
 
+- [Setup Guide](docs/setup.md)
 - [Architecture](docs/architecture.md)
 - [MVP](docs/mvp.md)
+- [Workflow Authoring](docs/workflows.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Local Development Testing](docs/local-development-testing.md)
 
 ## Excluded From This Milestone
 

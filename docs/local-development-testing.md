@@ -682,6 +682,8 @@ Use this checklist when deciding whether a change has enough test or smoke cover
 
 ## Troubleshooting
 
+For the user-facing troubleshooting guide, see `docs/troubleshooting.md`. This section keeps the shortest smoke-test reminders inline.
+
 - If the CLI cannot reach the daemon, confirm `HOME="$tmp"` is set in both terminals.
 - If protected endpoints return `unauthorized`, confirm the CLI and daemon are using the same temporary config directory and auth token.
 - If filesystem changes are not detected, confirm the source directory exists before the daemon starts and that the changed file matches the configured glob.

@@ -546,6 +546,33 @@ manual_only
 
 For the sample workflow, a manual inbox item with entity type `manual_item` matches the `manual-hello` workflow and creates a queued dispatch.
 
+## User-Facing Documentation
+
+The external setup path is documented in:
+
+```text
+README.md
+docs/setup.md
+```
+
+The setup guide starts from a fresh checkout, uses `scripts/dev.sh` for an isolated local home, verifies the daemon and CLI against that same home, runs the `manual-hello` workflow, shows where config/state/artifacts live, and explains the preferred `connections` setup for Claude and GitHub.
+
+Workflow authoring reference is documented in:
+
+```text
+docs/workflows.md
+```
+
+It covers supported top-level workflow fields, inbox triggers, dispatch policies, template context, built-in step types, sink types, validation rules, and readiness inspection.
+
+Troubleshooting is documented in:
+
+```text
+docs/troubleshooting.md
+```
+
+It covers daemon reachability, port conflicts, auth token mismatches, invalid config, workflow loading and dispatch issues, shell permission failures, readiness diagnostics, connection and GitHub source failures, filesystem source issues, SQLite locking, stale `running` runs after crashes, and resetting an isolated setup.
+
 ## Local API And CLI
 
 The local HTTP API is in:
@@ -772,5 +799,8 @@ The current committed baseline includes:
 - GitHub PR source support for unresolved review-thread workflows
 - Git checkout step support for local PR workspace preparation
 - Claude and git checkout readiness diagnostics in `runloop workflows show <id>`
+- External setup guidance in `README.md` and `docs/setup.md`
+- Workflow authoring reference in `docs/workflows.md`
+- Troubleshooting guide in `docs/troubleshooting.md`
 - Inbox versioning contract tests in `internal/inbox/service_test.go`
 - Local development testing guidance in `docs/local-development-testing.md`
